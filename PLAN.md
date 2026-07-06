@@ -495,6 +495,9 @@ __pycache__/
 - **`src/crawlers/run_all.py` 작성**: 전체 크롤링을 한 번에 실행
 - **학습 포인트**: requests + BeautifulSoup 기본 문법 익히기
 
+> **Phase 1 → Phase 2 넘어가기 전에 반드시 해결할 것**  
+> 현재 `_extract_attachments()`는 `.pdf`, `.hwp` 등 확장자로 끝나는 링크만 추출하는데, 학교 메인/ECE/SW/기숙사 첨부파일 링크는 대부분 `downloadBbsFile.do?atchmnflNo=...`처럼 동적 다운로드 URL이다. 따라서 **Phase 2 RAG 파이프라인을 시작하기 전에 `_extract_attachments()`를 개선하여 동적 다운로드 링크도 추출**해야 한다. 본문이 이미지로 된 공지의 경우 PDF 첨부 텍스트 추출이 중요하므로, 이 작업을 먼저 끝낸 뒤 Phase 2로 진행한다.
+
 ### Phase 2: RAG 파이프라인 구축 (2~3시간)
 - `server.py` 안에서 `data/raw/notices/` 아래 텍스트 파일들을 로드
 - `server.py` 안에서 `RecursiveCharacterTextSplitter`로 분할
