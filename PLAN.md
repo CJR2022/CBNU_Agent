@@ -427,6 +427,8 @@ git push origin feature/phase-1-crawling
 
 ### 9.3 커밋 메시지 컨벤션
 
+> **모든 커밋 메시지는 한국어로 작성한다.** 변경 내용을 내가 보고 바로 이해할 수 있도록 명확하게 적는다.
+
 ```
 feat:     새로운 기능 추가
 fix:      버그 수정
@@ -438,9 +440,9 @@ chore:    설정, 의존성, 기타 잡일
 
 예시:
 ```
-feat: add notice search tool with chroma retriever
-fix: handle empty menu page in dorm crawler
-docs: update README with installation steps
+feat: 4개 공지사항 크롤러 추가
+fix: 공지사항 본문의 이전글/다음글 낸비게이션 텍스트 제거
+docs: README 설치 방법 업데이트
 ```
 
 ### 9.4 .gitignore 필수 항목
