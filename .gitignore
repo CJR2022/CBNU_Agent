@@ -2,6 +2,8 @@
 /.venv
 .env
 chroma_db/
+data/raw/
+data/processed/
 __pycache__/
 *.pyc
 *.pyo
@@ -10,4 +12,3 @@ __pycache__/
 *.egg-info/
 .vscode/
 .idea/
-data/raw/cbnu_check/
