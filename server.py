@@ -6,6 +6,7 @@
 
 import os
 from datetime import date
+from typing import Annotated
 
 import requests
 from bs4 import BeautifulSoup
@@ -13,8 +14,14 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.tools import tool
-from langchain_openai import OpenAIEmbeddings
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from typing_extensions import TypedDict
 
 load_dotenv()
 
@@ -110,3 +117,69 @@ def build_retriever():
 
 
 retriever = build_retriever()
+
+
+class AgentState(TypedDict):
+    """LangGraph 상태 정의."""
+
+    messages: Annotated[list, add_messages]
+
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
+llm_with_tools = llm.bind_tools([get_dorm_menu, search_notices])
+
+
+understand_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "당신은 충북대학교 정보 안내 챗봇입니다. 기숙사 식단 질문이면 get_dorm_menu 도구를, "
+            "공지사항 관련 질문이면 search_notices 도구를, 일반 대화면 바로 답변하세요.",
+        ),
+        MessagesPlaceholder(variable_name="messages"),
+    ]
+)
+
+
+def understand_node(state: AgentState) -> dict:
+    """사용자 질문을 이해하고 적절한 도구 호출 또는 답변을 생성한다."""
+    chain = understand_prompt | llm_with_tools
+    response = chain.invoke({"messages": state["messages"]})
+    return {"messages": [response]}
+
+
+TOOLS_BY_NAME = {tool.name: tool for tool in [get_dorm_menu, search_notices]}
+
+
+def call_tool_node(state: AgentState) -> dict:
+    """마지막 AIMessage의 tool_calls를 실행하고 결과를 반환한다."""
+    last_message = state["messages"][-1]
+    tool_messages = []
+    for tool_call in last_message.tool_calls:
+        tool = TOOLS_BY_NAME[tool_call["name"]]
+        result = tool.invoke(tool_call["args"])
+        tool_messages.append(
+            ToolMessage(content=str(result), tool_call_id=tool_call["id"])
+        )
+    return {"messages": tool_messages}
+
+
+def route_after_understand(state: AgentState) -> str:
+    """understand_node 이후 도구 호출 여부에 따라 분기한다."""
+    last_message = state["messages"][-1]
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
+        return "call_tool_node"
+    return END
+
+
+builder = StateGraph(AgentState)
+builder.add_node("understand_node", understand_node)
+builder.add_node("call_tool_node", call_tool_node)
+builder.add_edge(START, "understand_node")
+builder.add_conditional_edges(
+    "understand_node",
+    route_after_understand,
+    {"call_tool_node": "call_tool_node", END: END},
+)
+builder.add_edge("call_tool_node", "understand_node")
+graph = builder.compile(checkpointer=MemorySaver())

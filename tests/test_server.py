@@ -6,6 +6,11 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from dotenv import load_dotenv
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
+
+load_dotenv()
 
 
 class _FakeEmbeddings:
@@ -35,6 +40,63 @@ class _FakeEmbeddings:
         return self._embed(text)
 
 
+class _FakeLLMWithTools:
+    """LangGraph 흐름 검증용 가짜 도구 바인딩 LLM.
+
+    실제 OpenAI API 대신 사용되어 테스트가 네트워크나 API 키 유효성에
+    의존하지 않도록 합니다. 질문 내용과 대화 이력에 따라 도구 호출 또는
+    최종 답변을 반환합니다.
+    """
+
+    def __init__(self, tools):
+        self.tools = tools
+
+    def invoke(self, messages, config=None, **kwargs):
+        if hasattr(messages, "messages"):
+            messages = messages.messages
+
+        last_human = None
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                last_human = msg.content
+                break
+
+        has_tool_result = any(isinstance(msg, ToolMessage) for msg in messages)
+
+        if "오늘 양성재 메뉴 뭐야?" in last_human:
+            if not has_tool_result:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "get_dorm_menu",
+                            "args": {"dorm_name": "양성재"},
+                            "id": "call_dorm_menu",
+                        }
+                    ],
+                )
+            return AIMessage(
+                content="오늘 양성재 메뉴는 김치찌개, 비빔밥, 된장찌개 등이 제공됩니다."
+            )
+
+        if "방금 메뉴 중 점심만 다시 알려줘" in last_human:
+            return AIMessage(
+                content="방금 양성재 메뉴 중 점심은 비빔밥입니다."
+            )
+
+        return AIMessage(content="안녕하세요. 충북대학교 정보 안내 챗봇입니다.")
+
+
+class _FakeChatOpenAI:
+    """langchain_openai.ChatOpenAI 대체용 가짜 클래스."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def bind_tools(self, tools):
+        return RunnableLambda(_FakeLLMWithTools(tools).invoke)
+
+
 def _dorm_site_reachable():
     """기숙사 식단 사이트에 네트워크 연결이 가능한지 확인한다."""
     try:
@@ -50,8 +112,10 @@ def _dorm_site_reachable():
 
 @pytest.fixture(scope="module")
 def server_mod():
-    """OpenAIEmbeddings를 모킹한 상태에서 server 모듈을 임포트한다."""
-    with patch("langchain_openai.OpenAIEmbeddings", _FakeEmbeddings):
+    """OpenAIEmbeddings와 ChatOpenAI를 모킹한 상태에서 server 모듈을 임포트한다."""
+    with patch("langchain_openai.OpenAIEmbeddings", _FakeEmbeddings), patch(
+        "langchain_openai.ChatOpenAI", _FakeChatOpenAI
+    ):
         import server
 
         yield server
@@ -101,3 +165,37 @@ def test_get_dorm_menu_returns_text(server_mod):
     result = server_mod.get_dorm_menu.invoke({"dorm_name": "양성재"})
     assert isinstance(result, str)
     assert "양성재" in result
+
+
+@pytest.mark.skipif(
+    not os.getenv("OPENAI_API_KEY"),
+    reason="No OpenAI API key available",
+)
+def test_graph_answers_dorm_menu_question(server_mod):
+    """LangGraph가 기숙사 메뉴 질문에 답변할 수 있어야 한다."""
+    config = {"configurable": {"thread_id": "test-dorm-menu"}}
+    response = server_mod.graph.invoke(
+        {"messages": [HumanMessage(content="오늘 양성재 메뉴 뭐야?")]},
+        config,
+    )
+    last_message = response["messages"][-1]
+    assert "양성재" in last_message.content
+
+
+@pytest.mark.skipif(
+    not os.getenv("OPENAI_API_KEY"),
+    reason="No OpenAI API key available",
+)
+def test_graph_remembers_context(server_mod):
+    """LangGraph가 대화 맥락을 기억하고 후속 질문에 답변할 수 있어야 한다."""
+    config = {"configurable": {"thread_id": "test-context"}}
+    server_mod.graph.invoke(
+        {"messages": [HumanMessage(content="오늘 양성재 메뉴 뭐야?")]},
+        config,
+    )
+    response = server_mod.graph.invoke(
+        {"messages": [HumanMessage(content="방금 메뉴 중 점심만 다시 알려줘")]},
+        config,
+    )
+    last_message = response["messages"][-1]
+    assert "점심" in last_message.content
