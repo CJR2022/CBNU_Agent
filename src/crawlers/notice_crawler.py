@@ -266,9 +266,19 @@ def _extract_attachments(soup, detail_url: str) -> list[str]:
     """공지 본문 페이지에서 첨부파일 링크를 추출한다."""
     attachments = []
     seen = set()
+    static_exts = [".pdf", ".hwp", ".doc", ".docx", ".xls", ".xlsx"]
+
     for a in soup.find_all("a", href=True):
         href = absolutize_href(a["href"], detail_url)
-        if any(href.lower().endswith(ext) for ext in [".pdf", ".hwp", ".doc", ".docx", ".xls", ".xlsx"]):
+        if not href:
+            continue
+
+        is_static = any(href.lower().endswith(ext) for ext in static_exts)
+        is_dynamic = "download" in href.lower() and (
+            "atchmnflNo" in href or "fileNo" in href
+        )
+
+        if is_static or is_dynamic:
             label = clean_text(a.get_text(strip=True)) or "첨부파일"
             item = f"{label}: {href}"
             if item not in seen:
