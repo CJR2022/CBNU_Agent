@@ -2,6 +2,8 @@ langchain
 langchain-openai
 langgraph
 langchain-chroma
+langchain-community
+langchain-text-splitters
 requests
 beautifulsoup4
 python-dotenv
