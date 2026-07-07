@@ -5,6 +5,7 @@
 """
 
 import logging
+import sys
 from datetime import date
 from typing import Annotated
 
@@ -288,3 +289,39 @@ builder.add_conditional_edges(
 builder.add_edge("call_tool_node", "generate_node")
 builder.add_edge("generate_node", END)
 graph = builder.compile(checkpointer=MemorySaver())
+
+
+def run_cli() -> None:
+    """터미널에서 대화형으로 에이전트와 대화할 수 있는 CLI 루프."""
+    if not sys.stdin.isatty():
+        try:
+            sys.stdin.reconfigure(encoding="utf-8")
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+    print("충북대학교 정보 안내 챗봇 CBNU Agent에 오신 것을 환영합니다!")
+    print("종료하려면 'exit', 'quit' 또는 '종료'를 입력하세요.\n")
+
+    config = {"configurable": {"thread_id": "cli"}}
+    while True:
+        try:
+            user_input = input("사용자: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n종료합니다.")
+            break
+
+        if user_input.lower() in {"exit", "quit", "종료"}:
+            print("종료합니다.")
+            break
+
+        if not user_input:
+            continue
+
+        state = graph.invoke({"messages": [("human", user_input)]}, config)
+        last_message = state["messages"][-1]
+        print(f"에이전트: {last_message.content}\n")
+
+
+if __name__ == "__main__":
+    run_cli()
