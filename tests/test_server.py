@@ -5,6 +5,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+import requests
 
 
 class _FakeEmbeddings:
@@ -32,6 +33,18 @@ class _FakeEmbeddings:
 
     def embed_query(self, text):
         return self._embed(text)
+
+
+def _dorm_site_reachable():
+    """기숙사 식단 사이트에 네트워크 연결이 가능한지 확인한다."""
+    try:
+        requests.get(
+            "https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20041",
+            timeout=5,
+        )
+        return True
+    except Exception:
+        return False
 
 
 @pytest.fixture(scope="module")
@@ -64,3 +77,26 @@ def test_retriever_returns_relevant_documents(server_mod):
     docs = server_mod.retriever.invoke("등록금 납부 기간")
     assert len(docs) == 3
     assert any("등록금" in doc.page_content for doc in docs)
+
+
+def test_search_notices_returns_text(server_mod):
+    """search_notices가 retriever.invoke 결과를 문자열로 반환해야 한다."""
+    fake_doc = type("Doc", (), {"page_content": "등록금 납부 안내"})()
+    mock_retriever = type(
+        "MockRetriever", (), {"invoke": lambda self, query: [fake_doc]}
+    )()
+    with patch.object(server_mod, "retriever", mock_retriever):
+        result = server_mod.search_notices.invoke({"query": "등록금"})
+        assert isinstance(result, str)
+        assert "등록금" in result
+
+
+@pytest.mark.skipif(
+    not _dorm_site_reachable(),
+    reason="Dorm menu site is not reachable from this environment",
+)
+def test_get_dorm_menu_returns_text(server_mod):
+    """get_dorm_menu가 문자열을 반환하고 기숙사 이름을 포함해야 한다."""
+    result = server_mod.get_dorm_menu.invoke({"dorm_name": "양성재"})
+    assert isinstance(result, str)
+    assert "양성재" in result
