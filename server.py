@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
-from langchain_core.tools import tool
+from langchain.tools import tool
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -26,6 +26,7 @@ def fetch_html(url: str) -> BeautifulSoup:
     headers = {"User-Agent": "Mozilla/5.0 (CBNU-Agent/1.0)"}
     response = requests.get(url, headers=headers, timeout=30)
     response.encoding = "utf-8"
+    response.raise_for_status()
     return BeautifulSoup(response.text, "html.parser")
 
 
@@ -74,7 +75,7 @@ def get_dorm_menu(dorm_name: str = "개성재") -> str:
 
 @tool
 def search_notices(query: str) -> str:
-    """공지사항 벡터 스토어에서 query와 관련된 내용을 검색한다.
+    """학교/전자정보/소프트웨어/기숙사 공지사항 벡터 스토어에서 query와 관련된 내용을 검색한다.
 
     Args:
         query: 검색할 키워드나 문장.

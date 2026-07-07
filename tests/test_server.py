@@ -40,7 +40,8 @@ def _dorm_site_reachable():
     try:
         requests.get(
             "https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20041",
-            timeout=5,
+            headers={"User-Agent": "Mozilla/5.0 (CBNU-Agent/1.0)"},
+            timeout=30,
         )
         return True
     except Exception:
