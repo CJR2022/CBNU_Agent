@@ -32,7 +32,7 @@ def build_retriever():
 
     vectorstore = Chroma.from_documents(
         documents=split_docs,
-        embedding=OpenAIEmbeddings(),
+        embedding=OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY),
         persist_directory="./chroma_db",
     )
 

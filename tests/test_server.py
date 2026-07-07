@@ -56,7 +56,7 @@ def test_module_level_retriever_exists_with_invoke(server_mod):
 
 
 @pytest.mark.skipif(
-    os.getenv("OPENAI_API_KEY") == "",
+    not os.getenv("OPENAI_API_KEY"),
     reason="No OpenAI API key available",
 )
 def test_retriever_returns_relevant_documents(server_mod):
