@@ -291,6 +291,21 @@ builder.add_edge("generate_node", END)
 graph = builder.compile(checkpointer=MemorySaver())
 
 
+def run_agent(user_input: str, thread_id: str = "web") -> str:
+    """순수 함수 형태의 에이전트 실행 진입점.
+
+    HTML UI나 API 서버에서 호출할 때 사용한다.
+    주어진 user_input을 graph에 전달하고 마지막 AIMessage의 content를 반환한다.
+    """
+    if not validate_input(user_input):
+        return "입력이 너무 짧거나 길어서 처리할 수 없습니다."
+
+    config = {"configurable": {"thread_id": thread_id}}
+    state = graph.invoke({"messages": [("human", user_input)]}, config)
+    last_message = state["messages"][-1]
+    return last_message.content if isinstance(last_message, AIMessage) else str(last_message)
+
+
 def run_cli() -> None:
     """터미널에서 대화형으로 에이전트와 대화할 수 있는 CLI 루프."""
     if not sys.stdin.isatty():

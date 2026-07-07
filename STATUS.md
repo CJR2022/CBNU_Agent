@@ -4,6 +4,8 @@
 >
 > **최상위 지침**: 본 프로젝트는 `PLAN.md`를 최상위 기획서로, `STATUS.md`(본 파일)를 실행 상태판으로 사용한다. 새 세션에서 작업을 이어갈 때는 반드시 두 파일을 먼저 확인한다.
 >
+> **향후 UI 방향**: 최종 산출물은 단일 HTML 파일(`index.html`) 기반의 웹 UI로 전환될 예정이다. `server.py`는 API/비즈니스 로직만 담당하고, UI는 `index.html`에서 분리한다. `run_cli()`는 개발/테스트용으로 유지한다.
+>
 > **핵심 가치**: 복잡한 코드 없이 **코드를 볼 때마다 쉽게 이해**할 수 있도록 작성한다.
 
 ---
@@ -30,7 +32,8 @@
 |--------------|------|------|
 | `PLAN.md` | 프로젝트 최상위 기획서 | 요구사항, 아키텍처, 평가 기준 |
 | `STATUS.md` | 실행 상태판 (본 파일) | 세션 간 진행 상황 공유용 |
-| `server.py` | 백엔드 전체 통합 파일 | RAG, Tool, LangGraph, Middleware, CLI |
+| `server.py` | 백엔드 전체 통합 파일 | RAG, Tool, LangGraph, Middleware, API 함수 |
+| `index.html` | 웹 UI 템플릿 | `server.py`와 동일한 루트 위치, 추후 백엔드 API 연동 예정 |
 | `src/crawlers/` | 크롤링 스크립트 | 공지사항, 기숙사 식단 |
 | `data/raw/notices/` | 공지사항 원본 텍스트 | `.gitignore` 대상 |
 | `data/raw/dorm_menu/` | 기숙사 식단 원본 텍스트 | `.gitignore` 대상 |
@@ -62,9 +65,17 @@
 
 ### 이후 진행 (Task 6)
 1. `server.py`의 `__main__`에 CLI 대화 루프 추가
-2. `graph.get_graph().draw_mermaid()`로 다이어그램 생성 후 `docs/workflow_diagram.md` 저장
-3. `README.md` 업데이트 (소개, 아키텍처, 설치/실행, Tool/RAG/Memory/Middleware/OutputParser 설명, 한계/개선)
-4. 커밋: `docs: README 및 LangGraph 워크플로우 다이어그램 작성`
+2. `server.py`에 HTML UI/API 연동용 `run_agent(user_input, thread_id)` 함수 분리
+3. `index.html` 생성 (`server.py`와 동일한 루트 위치)
+4. `graph.get_graph().draw_mermaid()`로 다이어그램 생성 후 `docs/workflow_diagram.md` 저장
+5. `README.md` 업데이트 (소개, 아키텍처, 설치/실행, Tool/RAG/Memory/Middleware/OutputParser/UI 설명, 한계/개선)
+6. 커밋: `docs: README 및 LangGraph 워크플로우 다이어그램 작성`
+
+### 향후 UI 연동 단계 (Task 7 이후)
+1. `server.py`에 `/api/chat` 같은 HTTP 엔드포인트 추가 또는 `run_agent()`를 HTTP 서버로 감싸기
+2. `index.html`의 TODO fetch 부분을 실제 엔드포인트로 연결
+3. CORS 설정, 로딩/에러 상태, 모바일 반응형, 접근성 개선
+4. `FinalAnswer.sources`를 UI에서 링크로 노출
 
 ### 마무리 (Task 7)
 1. `pytest` 전체 실행
