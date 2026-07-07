@@ -4,6 +4,7 @@
 유사도 기반 문서 검색(retriever)을 제공합니다.
 """
 
+import logging
 import os
 from datetime import date
 from typing import Annotated
@@ -14,18 +15,29 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.tools import tool
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class ToolChoice(BaseModel):
+    """도구 선택 결과를 구조화하는 Pydantic OutputParser 모델."""
+
+    tool_name: str = Field(description="선택할 도구 이름: dorm 또는 notice 또는 general")
+    reason: str = Field(description="선택 이유 한 문장")
 
 
 def fetch_html(url: str) -> BeautifulSoup:
@@ -172,10 +184,59 @@ def route_after_understand(state: AgentState) -> str:
     return END
 
 
+def validate_input(user_input: str) -> bool:
+    """사용자 입력이 비어 있지 않고 1000자 이하인지 검증한다."""
+    if not isinstance(user_input, str):
+        return False
+    if not user_input.strip():
+        return False
+    return len(user_input) <= 1000
+
+
+def log_middleware(state: AgentState) -> None:
+    """최신 HumanMessage 내용과 현재 메시지 개수를 로깅한다."""
+    messages = state.get("messages", [])
+    last_human = None
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_human = msg.content
+            break
+    logger.info("Latest human message: %s", last_human)
+    logger.info("Current message count: %d", len(messages))
+
+
+def middleware_node(state: AgentState) -> AgentState:
+    """입력을 검증하고 로깅하는 미들웨어 노드."""
+    messages = state.get("messages", [])
+    if not messages:
+        return {}
+
+    last_human = None
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_human = msg.content
+            break
+
+    if last_human is None:
+        return {}
+
+    if not validate_input(last_human):
+        return {
+            "messages": [
+                AIMessage(content="입력이 너무 짧거나 길어서 처리할 수 없습니다.")
+            ]
+        }
+
+    log_middleware(state)
+    return {}
+
+
 builder = StateGraph(AgentState)
+builder.add_node("middleware", middleware_node)
 builder.add_node("understand_node", understand_node)
 builder.add_node("call_tool_node", call_tool_node)
-builder.add_edge(START, "understand_node")
+builder.add_edge(START, "middleware")
+builder.add_edge("middleware", "understand_node")
 builder.add_conditional_edges(
     "understand_node",
     route_after_understand,

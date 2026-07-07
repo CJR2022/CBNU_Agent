@@ -199,3 +199,37 @@ def test_graph_remembers_context(server_mod):
     )
     last_message = response["messages"][-1]
     assert "점심" in last_message.content
+
+
+def test_validate_input_rejects_empty(server_mod):
+    """빈 문자열 또는 공백 입력은 False를 반환해야 한다."""
+    assert server_mod.validate_input("") is False
+    assert server_mod.validate_input("   ") is False
+
+
+def test_validate_input_accepts_valid(server_mod):
+    """정상적인 입력은 True를 반환해야 한다."""
+    assert server_mod.validate_input("오늘 양성재 메뉴 알려줘") is True
+
+
+def test_tool_choice_parses(server_mod):
+    """ToolChoice Pydantic 모델이 정상적으로 파싱되어야 한다."""
+    choice = server_mod.ToolChoice(
+        tool_name="dorm", reason="기숙사 식단 질문입니다."
+    )
+    assert choice.tool_name == "dorm"
+    assert choice.reason == "기숙사 식단 질문입니다."
+
+
+def test_middleware_rejects_empty_input(server_mod):
+    """빈 입력이 middleware에서 거부되어 에러 메시지가 반환되어야 한다."""
+    config = {"configurable": {"thread_id": "test-empty-input"}}
+    response = server_mod.graph.invoke(
+        {"messages": [HumanMessage(content="")]},
+        config,
+    )
+    assert any(
+        "입력이 너무 짧거나 길어서 처리할 수 없습니다." in msg.content
+        for msg in response["messages"]
+        if isinstance(msg, AIMessage)
+    )
