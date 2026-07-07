@@ -1,5 +1,7 @@
 /강의자료
 /.venv
+/.worktrees
+worktrees/
 .env
 chroma_db/
 data/raw/
