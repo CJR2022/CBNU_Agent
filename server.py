@@ -29,7 +29,9 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -231,12 +233,25 @@ def middleware_node(state: AgentState) -> AgentState:
     return {}
 
 
+def route_after_middleware(state: AgentState) -> str:
+    """middleware_node 이후 입력 검증 결과에 따라 분기한다."""
+    messages = state.get("messages", [])
+    if messages and isinstance(messages[-1], AIMessage):
+        if "입력이 너무 짧거나 길어서 처리할 수 없습니다." in messages[-1].content:
+            return END
+    return "understand_node"
+
+
 builder = StateGraph(AgentState)
 builder.add_node("middleware", middleware_node)
 builder.add_node("understand_node", understand_node)
 builder.add_node("call_tool_node", call_tool_node)
 builder.add_edge(START, "middleware")
-builder.add_edge("middleware", "understand_node")
+builder.add_conditional_edges(
+    "middleware",
+    route_after_middleware,
+    {"understand_node": "understand_node", END: END},
+)
 builder.add_conditional_edges(
     "understand_node",
     route_after_understand,
