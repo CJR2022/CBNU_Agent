@@ -16,6 +16,7 @@ from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -27,19 +28,17 @@ from typing_extensions import TypedDict
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 
-class ToolChoice(BaseModel):
-    """도구 선택 결과를 구조화하는 Pydantic OutputParser 모델."""
+class FinalAnswer(BaseModel):
+    """최종 답변을 구조화하는 Pydantic OutputParser 모델."""
 
-    tool_name: str = Field(description="선택할 도구 이름: dorm 또는 notice 또는 general")
-    reason: str = Field(description="선택 이유 한 문장")
+    answer: str = Field(description="사용자 질문에 대한 최종 답변")
+    sources: list[str] = Field(description="참고한 공지 URL 또는 기숙사 식단 페이지 URL 목록")
 
 
 def fetch_html(url: str) -> BeautifulSoup:
@@ -123,7 +122,7 @@ def build_retriever():
 
     vectorstore = Chroma.from_documents(
         documents=split_docs,
-        embedding=OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY),
+        embedding=OpenAIEmbeddings(),
         persist_directory="./chroma_db",
     )
 
@@ -139,7 +138,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 llm_with_tools = llm.bind_tools([get_dorm_menu, search_notices])
 
 
@@ -178,12 +177,41 @@ def call_tool_node(state: AgentState) -> dict:
     return {"messages": tool_messages}
 
 
+def generate_node(state: AgentState) -> dict:
+    """대화 기록과 도구 결과를 바탕으로 최종 답변을 생성한다."""
+    parser = PydanticOutputParser(pydantic_object=FinalAnswer)
+    messages = state["messages"]
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "당신은 충북대학교 정보 안내 챗봇입니다. "
+                "대화 기록과 검색된 정보를 바탕으로 사용자 질문에 대한 최종 답변을 생성하세요.\n"
+                "{format_instructions}",
+            ),
+            MessagesPlaceholder(variable_name="messages"),
+        ]
+    ).partial(format_instructions=parser.get_format_instructions())
+
+    chain = prompt | llm
+    response = chain.invoke({"messages": messages})
+
+    content = response.content if isinstance(response, AIMessage) else str(response)
+    try:
+        parsed = parser.parse(content)
+    except Exception:
+        parsed = FinalAnswer(answer=content, sources=[])
+
+    return {"messages": [AIMessage(content=parsed.answer)]}
+
+
 def route_after_understand(state: AgentState) -> str:
     """understand_node 이후 도구 호출 여부에 따라 분기한다."""
     last_message = state["messages"][-1]
     if isinstance(last_message, AIMessage) and last_message.tool_calls:
         return "call_tool_node"
-    return END
+    return "generate_node"
 
 
 def validate_input(user_input: str) -> bool:
@@ -246,6 +274,7 @@ builder = StateGraph(AgentState)
 builder.add_node("middleware", middleware_node)
 builder.add_node("understand_node", understand_node)
 builder.add_node("call_tool_node", call_tool_node)
+builder.add_node("generate_node", generate_node)
 builder.add_edge(START, "middleware")
 builder.add_conditional_edges(
     "middleware",
@@ -255,7 +284,8 @@ builder.add_conditional_edges(
 builder.add_conditional_edges(
     "understand_node",
     route_after_understand,
-    {"call_tool_node": "call_tool_node", END: END},
+    {"call_tool_node": "call_tool_node", "generate_node": "generate_node"},
 )
-builder.add_edge("call_tool_node", "understand_node")
+builder.add_edge("call_tool_node", "generate_node")
+builder.add_edge("generate_node", END)
 graph = builder.compile(checkpointer=MemorySaver())

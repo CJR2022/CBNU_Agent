@@ -96,6 +96,32 @@ class _FakeChatOpenAI:
     def bind_tools(self, tools):
         return RunnableLambda(_FakeLLMWithTools(tools).invoke)
 
+    def __call__(self, messages, config=None, **kwargs):
+        return self.invoke(messages, config, **kwargs)
+
+    def invoke(self, messages, config=None, **kwargs):
+        """generate_node 호출을 위한 FinalAnswer 형식 응답을 반환한다."""
+        if hasattr(messages, "messages"):
+            messages = messages.messages
+
+        last_human = None
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                last_human = msg.content
+                break
+
+        if last_human and "점심" in last_human:
+            return AIMessage(
+                content='{"answer": "방금 양성재 메뉴 중 점심은 비빔밥입니다.", "sources": []}'
+            )
+        if last_human and "메뉴" in last_human:
+            return AIMessage(
+                content='{"answer": "오늘 양성재 메뉴는 김치찌개, 비빔밥, 된장찌개 등이 제공됩니다.", "sources": ["https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20041&type=2"]}'
+            )
+        return AIMessage(
+            content='{"answer": "안녕하세요. 충북대학교 정보 안내 챗봇입니다.", "sources": []}'
+        )
+
 
 def _dorm_site_reachable():
     """기숙사 식단 사이트에 네트워크 연결이 가능한지 확인한다."""
@@ -212,13 +238,14 @@ def test_validate_input_accepts_valid(server_mod):
     assert server_mod.validate_input("오늘 양성재 메뉴 알려줘") is True
 
 
-def test_tool_choice_parses(server_mod):
-    """ToolChoice Pydantic 모델이 정상적으로 파싱되어야 한다."""
-    choice = server_mod.ToolChoice(
-        tool_name="dorm", reason="기숙사 식단 질문입니다."
+def test_final_answer_parses(server_mod):
+    """FinalAnswer Pydantic 모델이 정상적으로 파싱되어야 한다."""
+    answer = server_mod.FinalAnswer(
+        answer="오늘 양성재 메뉴는 김치찌개입니다.",
+        sources=["https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20041&type=2"],
     )
-    assert choice.tool_name == "dorm"
-    assert choice.reason == "기숙사 식단 질문입니다."
+    assert answer.answer == "오늘 양성재 메뉴는 김치찌개입니다."
+    assert answer.sources[0].startswith("https://dorm.chungbuk.ac.kr")
 
 
 def test_middleware_rejects_empty_input(server_mod):
