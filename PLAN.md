@@ -390,11 +390,16 @@ graph = builder.compile(checkpointer=MemorySaver())
 
 ```python
 from pydantic import BaseModel, Field
+from langchain_core.output_parsers import PydanticOutputParser
 
-class ToolChoice(BaseModel):
-    tool_name: str = Field(description="선택할 도구 이름: dorm 또는 notice 또는 general")
-    reason: str = Field(description="선택 이유 한 문장")
+class FinalAnswer(BaseModel):
+    answer: str = Field(description="사용자 질문에 대한 최종 답변")
+    sources: list[str] = Field(description="참고한 공지 URL 또는 기숙사 식단 페이지 URL 목록")
+
+parser = PydanticOutputParser(pydantic_object=FinalAnswer)
 ```
+
+> **학습 포인트**: LLM의 자유로운 텍스트 출력을 Pydantic 모델로 강제하여 답변의 일관성과 출처 추적성을 확보한다.
 
 ---
 
@@ -514,15 +519,15 @@ __pycache__/
 
 ### Phase 4: LangGraph 조립 (2~3시간)
 - `server.py` 안에서 `AgentState` 정의
-- `server.py` 안에 understand → route → call_tool → generate 노드 구현
-- `add_conditional_edges`로 도구 분기
+- `server.py` 안에 middleware → understand → route → call_tool → generate 노드 구현
+- `add_conditional_edges`로 도구/일반 분기 및 middleware 검증 실패 분기 구현
 - `MemorySaver`로 대화 이력 유지
 - **학습 포인트**: StateGraph, Node, Edge, checkpointer
 
 ### Phase 5: Middleware 및 OutputParser (1~2시간)
 - `server.py` 안에서 입력 검증 미들웨어 추가
 - `server.py` 안에서 로깅 미들웨어 추가
-- Pydantic OutputParser로 도구 선택 결과 구조화
+- `generate_node`에서 Pydantic OutputParser(`FinalAnswer`)로 최종 답변 구조화
 
 ### Phase 6: 문서화 및 다이어그램 (1시간)
 - `server.py`에서 `graph.get_graph().draw_mermaid()`로 워크플로우 다이어그램 생성
@@ -530,7 +535,7 @@ __pycache__/
   - 서비스 소개 및 사용 시나리오
   - 전체 아키텍처 설명 (다이어그램 포함)
   - 설치 및 실행 방법 (`python server.py`)
-  - 사용된 Tool / RAG / Memory / Middleware 설명
+  - 사용된 Tool / RAG / Memory / Middleware / OutputParser 설명
   - 한계점 및 향후 개선 방향
 - `main` 브랜치에 최종 머지 및 GitHub에 푸시
 

@@ -18,9 +18,9 @@
 | 2 | RAG 파이프라인 구축 | ✅ 완료 | `100b1d6` → `20cff3b` | `server.py`에 DirectoryLoader → Split → Chroma |
 | 3 | Tool 구현 | ✅ 완료 | `5a726db` → `ada2649` | `get_dorm_menu`, `search_notices` |
 | 4 | LangGraph 조립 | ✅ 완료 | `0063a29` | StateGraph + conditional edge + MemorySaver |
-| 5 | Middleware 및 OutputParser | ⏳ 진행 예정 | - | 입력 검증, 로깅, Pydantic ToolChoice |
+| 5 | Middleware 및 OutputParser | ⏳ 진행 예정 | - | 입력 검증, 로깅, Pydantic FinalAnswer |
 | 6 | 문서화 및 다이어그램 | ⏳ 진행 예정 | - | README, `docs/workflow_diagram.md`, CLI 루프 |
-| 7 | 최종 통합 및 main 머지 | ⏳ 진행 예정 | - | 전체 테스트, smoke test, TODO 갱신 |
+| 7 | 최종 통합 및 main 머지 | ⏳ 진행 예정 | - | 전체 테스트, smoke test, STATUS/PLAN 갱신 |
 
 ---
 
@@ -54,15 +54,16 @@
 ### 즉시 진행 (Task 5)
 1. `server.py`에 입력 검증 미들웨어 추가 (`validate_input`)
 2. `server.py`에 로깅 미들웨어 추가 (`log_middleware`)
-3. Pydantic `ToolChoice` OutputParser 모델 추가
-4. `middleware_node`를 StateGraph의 `START` 직후에 삽입
-5. `tests/test_server.py`에 관련 테스트 추가
-6. 커밋: `feat: 입력 검증 및 로깅 미들웨어, Pydantic OutputParser 추가`
+3. Pydantic `FinalAnswer` OutputParser 모델 추가 (`answer`, `sources` 필드)
+4. `generate_node`에서 `FinalAnswer`를 활용해 최종 답변 구조화
+5. `middleware_node`를 StateGraph의 `START` 직후에 삽입
+6. `tests/test_server.py`에 관련 테스트 추가
+7. 커밋: `feat: 입력 검증 및 로깅 미들웨어, Pydantic OutputParser 추가`
 
 ### 이후 진행 (Task 6)
 1. `server.py`의 `__main__`에 CLI 대화 루프 추가
 2. `graph.get_graph().draw_mermaid()`로 다이어그램 생성 후 `docs/workflow_diagram.md` 저장
-3. `README.md` 업데이트 (소개, 아키텍처, 설치/실행, Tool/RAG/Memory/Middleware 설명, 한계/개선)
+3. `README.md` 업데이트 (소개, 아키텍처, 설치/실행, Tool/RAG/Memory/Middleware/OutputParser 설명, 한계/개선)
 4. 커밋: `docs: README 및 LangGraph 워크플로우 다이어그램 작성`
 
 ### 마무리 (Task 7)
@@ -79,6 +80,7 @@
 - `.env`의 `OPENAI_API_KEY`가 실제 OpenAI 서버에서 401 인증 오류를 반환할 수 있음.
   - 확인 방법: `python -c "import os; from dotenv import load_dotenv; load_dotenv(); print(os.getenv('OPENAI_API_KEY') is not None)"`
   - 키가 유효하지 않으면 LLM 호출 테스트는 skip되거나 mock으로 대첼됨.
+- `OPENAI_API_KEY`는 `load_dotenv()`로 환경변수에 로드되므로, `ChatOpenAI()`/`OpenAIEmbeddings()`에 별도로 전달할 필요가 없음.
 - `data/raw/` 및 `chroma_db/`는 `.gitignore`에 포함되어 있어 커밋되지 않음.
 - 모든 커밋 메시지는 한국어로 작성한다.
 - 핵심 로직은 `server.py` 하나에 집중한다. `src/config.py`, `src/state.py` 등 추가 분리 금지.
