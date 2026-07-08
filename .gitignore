@@ -17,3 +17,6 @@ __pycache__/
 PLAN.md
 STATUS.md
 .superpowers/
+TODO.md
+tests/
+pytest.ini
