@@ -209,13 +209,19 @@
             input.value = '';
             setLoading(true);
 
-            const res = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text, thread_id: 'web' })
-            });
-            const data = await res.json();
-            appendMessage(data.answer, 'bot');
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text, thread_id: 'web' })
+                });
+                const data = await res.json();
+                appendMessage(data.answer, 'bot');
+            } catch (err) {
+                appendMessage('서버와 통신 중 오류가 발생했습니다.', 'bot');
+            } finally {
+                setLoading(false);
+            }
         });
     </script>
 </body>
