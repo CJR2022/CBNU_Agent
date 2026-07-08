@@ -14,7 +14,7 @@
 
 - **학사/학과 공지 질문**
   - 사용자: "컴퓨터공학과 최근 공지사항 알려줘"
-  - 에이전트: 미리 수집한 공지사항 데이터에서 검색해서 답변합니다.
+  - 에이전트: 미리 수집한 공지사항 데이터에서 검색해서 답변하며, 참고한 공지의 제목·날짜·URL을 함께 보여줍니다.
 
 - **후속 대화**
   - 사용자: "방금 공지 중 등록금 납부 기간 자세히 알려줘"
@@ -90,11 +90,12 @@ uvicorn server:app --reload
 ### Tool
 
 - `get_dorm_menu(dorm_name: str)`: 충북대 기숙사 식단 페이지에서 오늘 날짜의 식단을 실시간으로 가져옵니다.
-- `search_notices(query: str)`: 미리 구축한 Chroma 벡터스토어에서 사용자 질문과 관련된 공지 내용을 검색합니다.
+- `search_notices(query: str)`: 미리 구축한 Chroma 벡터스토어에서 사용자 질문과 관련된 공지 내용을 검색합니다. 검색 결과에는 공지 제목, 날짜, URL 메타데이터가 포함되어 답변에 출처로 노출됩니다.
 
 ### RAG
 
 - `data/raw/notices/`에 있는 텍스트 파일들을 `DirectoryLoader`로 읽고, `RecursiveCharacterTextSplitter`로 분할합니다.
+- 각 공지 문서의 제목, 날짜, URL을 chunk 앞에 추가해 검색 결과에 출처 정보를 담습니다.
 - `OpenAIEmbeddings`로 임베딩한 뒤 `Chroma` 벡터스토어에 저장합니다.
 - 질문이 들어오면 `retriever.invoke(query)`로 유사도 기반 문서를 검색해 답변에 활용합니다.
 
@@ -112,12 +113,12 @@ uvicorn server:app --reload
 ### OutputParser
 
 - `FinalAnswer` Pydantic 모델을 정의해 최종 답변을 `answer`와 `sources` 필드로 구조화합니다.
-- `generate_node`에서 LLM 출력을 파싱해 깔끔한 답변을 생성합니다.
+- `generate_node`에서 LLM 출력을 파싱해 깔끔한 답변을 생성하고, 참고한 공지 URL을 `sources`에 담아 웹 UI와 API 응답에 함께 전달합니다.
 
 ### 웹 UI
 
 - 프로젝트 루트에 있는 `index.html`은 단일 파일로 구성된 반응형 채팅 UI입니다.
-- 현재는 정적 템플릿이며, 향후 `/api/chat` 엔드포인트와 연결해 `run_agent()`를 호출할 예정입니다.
+- `/api/chat` 엔드포인트와 연결해 `run_agent()`를 호출하며, 답변 아래에 참고 출처 URL을 클릭 가능한 링크로 표시합니다.
 - 브라우저에서 `index.html` 파일을 직접 열어볼 수 있으며, UI 데모를 확인할 수 있습니다.
 
 ## 5. 한계점 및 향후 개선 방향
@@ -126,7 +127,7 @@ uvicorn server:app --reload
 
 - **실시간 데이터 의존**: 공지사항은 주기적 크롤링 이후에 검색할 수 있어 최신 글이 바로 반영되지 않을 수 있습니다.
 - **크롤링 불안정성**: 웹사이트 구조가 변경되면 CSS 선택자를 직접 수정해야 합니다.
-- **출처 표시**: RAG 검색 결과에서 참고한 원본 URL을 답변에 명확히 포함하는 기능이 추가로 필요합니다.
+- **출처 표시**: ~~RAG 검색 결과에서 참고한 원본 URL을 답변에 명확히 포함하는 기능이 추가로 필요합니다.~~ 공지 메타데이터(제목, 날짜, URL)를 chunk에 포함하고, `FinalAnswer.sources`를 통해 답변과 함께 웹 UI에 노출합니다.
 
 ### 향후 개선 방향
 

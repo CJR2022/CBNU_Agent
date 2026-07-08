@@ -84,6 +84,26 @@
             border-bottom-left-radius: 0.25rem;
         }
 
+        .sources {
+            margin-top: 0.5rem;
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+        }
+
+        .sources a {
+            color: var(--primary);
+            word-break: break-all;
+        }
+
+        .sources ul {
+            margin: 0.25rem 0 0;
+            padding-left: 1.25rem;
+        }
+
+        .sources li {
+            margin-bottom: 0.25rem;
+        }
+
         .input-area {
             background: var(--surface);
             border-top: 1px solid var(--border);
@@ -176,11 +196,34 @@
         const input = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
 
-        function appendMessage(text, sender) {
-            const div = document.createElement('div');
-            div.className = `message ${sender}`;
-            div.textContent = text;
-            chat.appendChild(div);
+        function appendMessage(text, sender, sources = []) {
+            const wrapper = document.createElement('div');
+            wrapper.className = `message ${sender}`;
+
+            const textDiv = document.createElement('div');
+            textDiv.textContent = text;
+            wrapper.appendChild(textDiv);
+
+            if (sources && sources.length > 0) {
+                const sourcesDiv = document.createElement('div');
+                sourcesDiv.className = 'sources';
+                sourcesDiv.textContent = '출처:';
+                const ul = document.createElement('ul');
+                sources.forEach(url => {
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    a.textContent = url;
+                    li.appendChild(a);
+                    ul.appendChild(li);
+                });
+                sourcesDiv.appendChild(ul);
+                wrapper.appendChild(sourcesDiv);
+            }
+
+            chat.appendChild(wrapper);
             chat.scrollTop = chat.scrollHeight;
         }
 
@@ -216,7 +259,7 @@
                     body: JSON.stringify({ message: text, thread_id: 'web' })
                 });
                 const data = await res.json();
-                appendMessage(data.answer, 'bot');
+                appendMessage(data.answer, 'bot', data.sources);
             } catch (err) {
                 appendMessage('서버와 통신 중 오류가 발생했습니다.', 'bot');
             } finally {

@@ -12,6 +12,7 @@ LangGraph 기반 에이전트를 구성하며, middleware 노드, 도구 노드,
 """
 
 import logging
+import re
 import sys
 from datetime import date
 from typing import Annotated
@@ -25,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.tools import tool
+from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -117,18 +119,58 @@ def search_notices(query: str) -> str:
     return "\n\n".join(doc.page_content for doc in docs)
 
 
+def _split_into_notices(page_content: str) -> list[str]:
+    """하나의 .txt 파일에 포함된 여러 공지를 분리한다."""
+    # 파일 상단의 '# {source} 공지사항' 헤더는 첫 공지에 포함되도록 제거
+    content = re.sub(r"^#\s+.+\n+", "", page_content.strip(), count=1)
+    # '==========' 형태의 구분선으로 공지 분리
+    parts = re.split(r"\n={10,}\n", content)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _extract_notice_metadata(page_content: str) -> dict[str, str]:
+    """공지 텍스트의 상단 메타데이터에서 제목, 날짜, URL을 추출한다."""
+    title_match = re.search(r"제목:\s*(.+)", page_content)
+    date_match = re.search(r"날짜:\s*(.+)", page_content)
+    url_match = re.search(r"URL:\s*(.+)", page_content)
+    return {
+        "title": title_match.group(1).strip() if title_match else "알 수 없음",
+        "date": date_match.group(1).strip() if date_match else "알 수 없음",
+        "url": url_match.group(1).strip() if url_match else "",
+    }
+
+
 def build_retriever():
-    """data/raw/notices의 .txt 파일들로 Chroma 벡터스토어를 만들고 retriever를 반환한다."""
+    """data/raw/notices의 .txt 파일들로 Chroma 벡터스토어를 만들고 retriever를 반환한다.
+
+    각 공지의 메타데이터(제목, 날짜, URL)를 해당 공지에서 나뉜 모든 chunk 앞에 추가한다.
+    """
     loader = DirectoryLoader(
         "data/raw/notices",
         glob="*.txt",
         loader_cls=TextLoader,
         loader_kwargs={"encoding": "utf-8"},
     )
-    documents = loader.load()
+    raw_documents = loader.load()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    split_docs = splitter.split_documents(documents)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
+
+    split_docs = []
+    for raw_doc in raw_documents:
+        for notice_text in _split_into_notices(raw_doc.page_content):
+            meta = _extract_notice_metadata(notice_text)
+            header = (
+                f"[출처]\n"
+                f"제목: {meta['title']}\n"
+                f"날짜: {meta['date']}\n"
+                f"URL: {meta['url']}\n\n"
+            )
+            notice_doc = Document(
+                page_content=notice_text, metadata=dict(raw_doc.metadata)
+            )
+            for chunk in splitter.split_documents([notice_doc]):
+                chunk.page_content = header + chunk.page_content
+                split_docs.append(chunk)
 
     vectorstore = Chroma.from_documents(
         documents=split_docs,
@@ -136,7 +178,7 @@ def build_retriever():
         persist_directory="./chroma_db",
     )
 
-    return vectorstore.as_retriever(search_kwargs={"k": 3})
+    return vectorstore.as_retriever(search_kwargs={"k": 5})
 
 
 retriever = build_retriever()
@@ -146,6 +188,7 @@ class AgentState(TypedDict):
     """LangGraph 상태 정의."""
 
     messages: Annotated[list, add_messages]
+    sources: list[str]
 
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -198,6 +241,8 @@ def generate_node(state: AgentState) -> dict:
                 "system",
                 "당신은 충북대학교 정보 안내 챗봇입니다. "
                 "대화 기록과 검색된 정보를 바탕으로 사용자 질문에 대한 최종 답변을 생성하세요.\n"
+                "검색된 공지를 참고할 때, 해당 공지의 제목과 날짜, URL을 답변에 포함하세요. "
+                "sources 필드에는 참고한 공지의 URL을 채워넣으세요.\n"
                 "{format_instructions}",
             ),
             MessagesPlaceholder(variable_name="messages"),
@@ -213,7 +258,10 @@ def generate_node(state: AgentState) -> dict:
     except Exception:
         parsed = FinalAnswer(answer=content, sources=[])
 
-    return {"messages": [AIMessage(content=parsed.answer)]}
+    return {
+        "messages": [AIMessage(content=parsed.answer)],
+        "sources": parsed.sources,
+    }
 
 
 def route_after_understand(state: AgentState) -> str:
@@ -301,19 +349,22 @@ builder.add_edge("generate_node", END)
 graph = builder.compile(checkpointer=MemorySaver())
 
 
-def run_agent(user_input: str, thread_id: str = "web") -> str:
+def run_agent(user_input: str, thread_id: str = "web") -> dict[str, str | list[str]]:
     """순수 함수 형태의 에이전트 실행 진입점.
 
     HTML UI나 API 서버에서 호출할 때 사용한다.
-    주어진 user_input을 graph에 전달하고 마지막 AIMessage의 content를 반환한다.
+    주어진 user_input을 graph에 전달하고 답변과 참고 출처를 반환한다.
     """
     if not validate_input(user_input):
-        return "입력이 너무 짧거나 길어서 처리할 수 없습니다."
+        return {"answer": "입력이 너무 짧거나 길어서 처리할 수 없습니다.", "sources": []}
 
     config = {"configurable": {"thread_id": thread_id}}
-    state = graph.invoke({"messages": [("human", user_input)]}, config)
+    state = graph.invoke({"messages": [("human", user_input)], "sources": []}, config)
     last_message = state["messages"][-1]
-    return last_message.content if isinstance(last_message, AIMessage) else str(last_message)
+    answer = (
+        last_message.content if isinstance(last_message, AIMessage) else str(last_message)
+    )
+    return {"answer": answer, "sources": state.get("sources", [])}
 
 
 def run_cli() -> None:
@@ -369,8 +420,8 @@ def root():
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    answer = run_agent(req.message, req.thread_id)
-    return JSONResponse({"answer": answer})
+    result = run_agent(req.message, req.thread_id)
+    return JSONResponse(result)
 
 
 if __name__ == "__main__":
