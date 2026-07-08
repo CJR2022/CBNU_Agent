@@ -15,7 +15,8 @@ import logging
 import re
 import sys
 from datetime import date
-from typing import Annotated
+from functools import lru_cache
+from typing import Annotated, Literal
 
 import requests
 from bs4 import BeautifulSoup
@@ -51,7 +52,7 @@ class FinalAnswer(BaseModel):
 
     answer: str = Field(description="사용자 질문에 대한 최종 답변. 검색된 정볼만 사용하고, 정보가 없으면 '해당 정보는 확인할 수 없습니다'라고 답변하세요.")
     sources: list[str] = Field(description="참고한 공지 URL 목록")
-    confidence: str = Field(description="답변 확신도: high, medium, low 중 하나. 근거가 충분하면 high, 부족하면 low")
+    confidence: Literal["high", "medium", "low"] = Field(description="답변 확신도: high, medium, low 중 하나. 근거가 충분하면 high, 부족하면 low")
 
 
 def fetch_html(url: str) -> BeautifulSoup:
@@ -130,36 +131,10 @@ def search_notices(query: str) -> str:
             except Exception:
                 return (False, date.min, date_str)
 
-        # 최신 공지를 보장하기 위해 원본 파일에서 최근 공지도 함께 포함한다.
-        try:
-            loader = DirectoryLoader(
-                "data/raw/notices",
-                glob="*.txt",
-                loader_cls=TextLoader,
-                loader_kwargs={"encoding": "utf-8"},
-            )
-            raw_documents = loader.load()
-        except Exception:
-            raw_documents = []
-
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
-        latest_docs = []
-        for raw_doc in raw_documents:
-            for notice_text in _split_into_notices(raw_doc.page_content):
-                meta = _extract_notice_metadata(notice_text)
-                header = (
-                    f"[출처]\n"
-                    f"제목: {meta['title']}\n"
-                    f"날짜: {meta['date']}\n"
-                    f"URL: {meta['url']}\n\n"
-                )
-                notice_doc = Document(
-                    page_content=notice_text,
-                    metadata={"title": meta["title"], "date": meta["date"], "url": meta["url"]},
-                )
-                for chunk in splitter.split_documents([notice_doc]):
-                    chunk.page_content = header + chunk.page_content
-                    latest_docs.append(chunk)
+        global _latest_docs_cache
+        if _latest_docs_cache is None:
+            _latest_docs_cache = _load_latest_docs()
+        latest_docs = _latest_docs_cache
 
         seen_urls = {doc.metadata.get("url") for doc in docs}
         for doc in sorted(latest_docs, key=_sort_key, reverse=True)[:10]:
@@ -246,7 +221,60 @@ def build_retriever():
     return vectorstore.as_retriever(search_kwargs={"k": 5})
 
 
-retriever = build_retriever()
+@lru_cache(maxsize=1)
+def get_retriever():
+    """처음 사용할 때만 Chroma 벡터스토어를 구축한다."""
+    return build_retriever()
+
+
+class _LazyRetriever:
+    """모듈 수준 retriever 참조를 유지하면서 지연 초기화를 수행하는 래퍼."""
+
+    __slots__ = ()
+
+    def invoke(self, query: str):
+        return get_retriever().invoke(query)
+
+
+retriever = _LazyRetriever()
+
+
+# 최신 공지 조회용 캐시 (프로세스 재시작 전까지 유지)
+_latest_docs_cache: list[Document] | None = None
+
+
+def _load_latest_docs() -> list[Document]:
+    """원본 공지 파일에서 최신 공지 chunk를 로드한다."""
+    try:
+        loader = DirectoryLoader(
+            "data/raw/notices",
+            glob="*.txt",
+            loader_cls=TextLoader,
+            loader_kwargs={"encoding": "utf-8"},
+        )
+        raw_documents = loader.load()
+    except Exception:
+        raw_documents = []
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
+    latest_docs = []
+    for raw_doc in raw_documents:
+        for notice_text in _split_into_notices(raw_doc.page_content):
+            meta = _extract_notice_metadata(notice_text)
+            header = (
+                f"[출처]\n"
+                f"제목: {meta['title']}\n"
+                f"날짜: {meta['date']}\n"
+                f"URL: {meta['url']}\n\n"
+            )
+            notice_doc = Document(
+                page_content=notice_text,
+                metadata={"title": meta["title"], "date": meta["date"], "url": meta["url"]},
+            )
+            for chunk in splitter.split_documents([notice_doc]):
+                chunk.page_content = header + chunk.page_content
+                latest_docs.append(chunk)
+    return latest_docs
 
 
 class AgentState(TypedDict):
@@ -255,6 +283,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     sources: list[str]
     confidence: str
+    valid_input: bool
 
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -383,19 +412,18 @@ def middleware_node(state: AgentState) -> AgentState:
         return {
             "messages": [
                 AIMessage(content="입력이 너무 짧거나 길어서 처리할 수 없습니다.")
-            ]
+            ],
+            "valid_input": False,
         }
 
     log_middleware(state)
-    return {}
+    return {"valid_input": True}
 
 
 def route_after_middleware(state: AgentState) -> str:
     """middleware_node 이후 입력 검증 결과에 따라 분기한다."""
-    messages = state.get("messages", [])
-    if messages and isinstance(messages[-1], AIMessage):
-        if "입력이 너무 짧거나 길어서 처리할 수 없습니다." in messages[-1].content:
-            return END
+    if state.get("valid_input") is False:
+        return END
     return "understand_node"
 
 
@@ -430,7 +458,15 @@ def run_agent(user_input: str, thread_id: str = "web") -> dict[str, str | list[s
         return {"answer": "입력이 너무 짧거나 길어서 처리할 수 없습니다.", "sources": [], "confidence": "low"}
 
     config = {"configurable": {"thread_id": thread_id}}
-    state = graph.invoke({"messages": [("human", user_input)], "sources": [], "confidence": "medium"}, config)
+    state = graph.invoke(
+        {
+            "messages": [("human", user_input)],
+            "sources": [],
+            "confidence": "medium",
+            "valid_input": True,
+        },
+        config,
+    )
     last_message = state["messages"][-1]
     answer = (
         last_message.content if isinstance(last_message, AIMessage) else str(last_message)
@@ -474,7 +510,15 @@ def run_cli() -> None:
         if not user_input:
             continue
 
-        state = graph.invoke({"messages": [("human", user_input)]}, config)
+        state = graph.invoke(
+            {
+                "messages": [("human", user_input)],
+                "sources": [],
+                "confidence": "medium",
+                "valid_input": True,
+            },
+            config,
+        )
         last_message = state["messages"][-1]
         print(f"에이전트: {last_message.content}\n")
 
@@ -487,7 +531,7 @@ class ChatRequest(BaseModel):
 app = FastAPI(title="CBNU Agent")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost", "http://localhost:8000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

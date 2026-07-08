@@ -7,6 +7,7 @@
 - 기숙사 공지
 """
 
+import logging
 import re
 from io import BytesIO
 
@@ -14,6 +15,9 @@ import requests
 from pypdf import PdfReader
 
 from src.crawlers.utils import fetch_html, clean_text, save_text, absolutize_href
+
+# pypdf 경고 메시지가 stderr를 어지럽히지 않도록 조정한다.
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 # (이름, 목록 URL, 베이스 URL)
 NOTICE_SOURCES = [
@@ -296,21 +300,22 @@ def extract_notice_detail(detail_url: str, fallback_title: str = "") -> dict:
     content = _extract_content(soup, detail_url)
     attachments = _extract_attachments(soup, detail_url)
 
-    # 본문이 너무 짧으면 첨부 PDF에서 텍스트 추출하여 보강
-    if len(content.strip()) < 100:
-        pdf_texts = []
-        for att in attachments:
-            url = att.split(": ", 1)[-1] if ": " in att else att
-            is_pdf = ".pdf" in url.lower()
-            is_dynamic = "download" in url.lower() and ("atchmnflNo" in url or "fileNo" in url)
-            if is_pdf or is_dynamic:
-                pdf_text = extract_pdf_text(url)
-                if pdf_text:
-                    pdf_texts.append(f"[첨부 PDF 내용]\n{pdf_text}")
-                # 첫 번째 PDF만 사용 (속도/비용 고려)
-                break
-        if pdf_texts:
-            content = content + "\n\n" + "\n\n".join(pdf_texts)
+    # 첨부 PDF에서 텍스트를 추출해 본문을 보강한다.
+    pdf_text = None
+    for att in attachments:
+        url = att.split(": ", 1)[-1] if ": " in att else att
+        is_static_pdf = url.lower().endswith(".pdf")
+        is_dynamic_pdf = "download" in url.lower() and ("atchmnflNo" in url or "fileNo" in url)
+        if not (is_static_pdf or is_dynamic_pdf):
+            continue
+
+        extracted = extract_pdf_text(url)
+        if extracted and not extracted.startswith("[PDF 추출 실패"):
+            pdf_text = extracted
+            break
+
+    if pdf_text:
+        content = content + "\n\n[첨부 PDF 내용]\n" + pdf_text
 
     return {
         "title": title,

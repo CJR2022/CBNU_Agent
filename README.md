@@ -67,21 +67,17 @@ cp .env.example .env
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 4) 에이전트 실행
+### 4) CLI로 실행
+
+서버 시작 전에 최신 공지사항 데이터를 수집해야 합니다.
+
+```bash
+python -m src.crawlers.run_all
+```
 
 ```bash
 python server.py
 ```
-
-`index.html`은 브라우저에서 직접 열어 웹 UI 데모를 확인할 수 있습니다.
-
-### 5) 웹 UI로 실행
-
-```bash
-uvicorn server:app --reload
-```
-
-브라우저에서 http://localhost:8000 열기
 
 실행하면 아래와 같이 대화형 프롬프트가 표시됩니다.
 
@@ -92,6 +88,22 @@ uvicorn server:app --reload
 사용자: 안녕?
 에이전트: 안녕하세요! 충북대학교 정보 안내 챗봇입니다.
 ```
+
+### 5) 웹 UI로 실행
+
+서버 시작 전에 최신 공지사항 데이터를 수집해야 합니다.
+
+```bash
+python -m src.crawlers.run_all
+```
+
+```bash
+uvicorn server:app --reload
+```
+
+브라우저에서 http://localhost:8000 열기
+
+`index.html`은 `/api/chat` 엔드포인트를 호출하므로, 반드시 `uvicorn server:app`으로 백엔드를 실행한 뒤 브라우저에서 접속해야 합니다. 파일을 직접 열어도 API가 동작하지 않습니다.
 
 ## 4. 사용된 주요 기술
 
@@ -128,7 +140,7 @@ uvicorn server:app --reload
 
 - 프로젝트 루트에 있는 `index.html`은 단일 파일로 구성된 반응형 채팅 UI입니다.
 - `/api/chat` 엔드포인트와 연결해 `run_agent()`를 호출하며, 답변 아래에 참고 출처 URL을 클릭 가능한 링크로 표시합니다.
-- 브라우저에서 `index.html` 파일을 직접 열어볼 수 있으며, UI 데모를 확인할 수 있습니다.
+- 웹 UI를 확인하려면 `uvicorn server:app`으로 서버를 실행한 뒤 브라우저에서 http://localhost:8000 에 접속하세요.
 
 ## 5. 한계점 및 향후 개선 방향
 
