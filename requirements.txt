@@ -10,3 +10,5 @@ python-dotenv
 pydantic
 pytest
 pypdf
+fastapi
+uvicorn

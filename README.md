@@ -67,6 +67,14 @@ python server.py
 
 `index.html`은 브라우저에서 직접 열어 웹 UI 데모를 확인할 수 있습니다.
 
+### 웹 UI로 실행
+
+```bash
+uvicorn server:app --reload
+```
+
+브라우저에서 http://localhost:8000 열기
+
 실행하면 아래와 같이 대화형 프롬프트가 표시됩니다.
 
 ```text

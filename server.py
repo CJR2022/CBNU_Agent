@@ -19,6 +19,9 @@ from typing import Annotated
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.tools import tool
@@ -343,6 +346,31 @@ def run_cli() -> None:
         state = graph.invoke({"messages": [("human", user_input)]}, config)
         last_message = state["messages"][-1]
         print(f"에이전트: {last_message.content}\n")
+
+
+class ChatRequest(BaseModel):
+    message: str
+    thread_id: str = "web"
+
+
+app = FastAPI(title="CBNU Agent")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+def root():
+    return FileResponse("index.html")
+
+
+@app.post("/api/chat")
+def chat(req: ChatRequest):
+    answer = run_agent(req.message, req.thread_id)
+    return JSONResponse({"answer": answer})
 
 
 if __name__ == "__main__":

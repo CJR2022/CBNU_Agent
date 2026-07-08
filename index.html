@@ -209,20 +209,13 @@
             input.value = '';
             setLoading(true);
 
-            // TODO: 백엔드 API 연동 시 아래 URL을 실제 엔드포인트로 교체
-            // const res = await fetch('/api/chat', {
-            //     method: 'POST',
-            //     headers: { 'Content-Type': 'application/json' },
-            //     body: JSON.stringify({ message: text })
-            // });
-            // const data = await res.json();
-            // appendMessage(data.answer, 'bot');
-
-            // 현재는 데모 응답
-            setTimeout(() => {
-                setLoading(false);
-                appendMessage('아직 백엔드 API가 연결되지 않았습니다. 서버 연동 후 이 메시지가 실제 답변으로 대첼됩니다.', 'bot');
-            }, 800);
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: text, thread_id: 'web' })
+            });
+            const data = await res.json();
+            appendMessage(data.answer, 'bot');
         });
     </script>
 </body>
