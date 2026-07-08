@@ -36,4 +36,4 @@ graph TD;
 | `call_tool_node` | 선택된 도구(`get_dorm_menu`, `search_notices`)를 실행합니다. |
 | `generate_node` | 도구 결과와 대화 기록을 바탕으로 최종 답변을 생성합니다. |
 
-분기(점선 화살표)는 조걶 엣지(conditional edge)로, middleware에서 입력이 유효하지 않으면 바로 종료하고, understand_node에서 도구 호출이 필요한 경우에만 `call_tool_node`로 이동합니다.
+분기(점선 화살표)는 조건 엣지(conditional edge)로, middleware에서 입력이 유효하지 않으면 바로 종료하고, understand_node에서 도구 호출이 필요한 경우에만 `call_tool_node`로 이동합니다.

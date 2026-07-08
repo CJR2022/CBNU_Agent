@@ -1,7 +1,14 @@
 """CBNU Agent RAG 서버 모듈.
 
-공지사항 텍스트 파일을 로드하고 벡터 스토어를 구축하여
-유사도 기반 문서 검색(retriever)을 제공합니다.
+LangGraph 기반 에이전트를 구성하며, middleware 노드, 도구 노드, 그리고
+대화형 CLI와 `run_agent()` API 진입점을 제공합니다.
+
+주요 구성 요소:
+- LangGraph `StateGraph`: middleware → understand → tool/generate 워크플로우
+- `middleware_node`: 입력 검증 및 로깅
+- `get_dorm_menu`, `search_notices`: 기숙사 식단 및 공지사항 검색 도구
+- `run_cli()`: 터미널 대화형 CLI
+- `run_agent()`: HTML UI 및 API 서버에서 호출하는 순수 함수형 진입점
 """
 
 import logging

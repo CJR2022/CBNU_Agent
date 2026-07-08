@@ -28,7 +28,7 @@
 middleware (입력 검증 + 로깅)
     ↓
 understand_node (도구 선택/일반 대화 판단)
-    ↓ (조걶 분기)
+    ↓ (조건 분기)
 call_tool_node ────────→ generate_node
     ↓                        ↓
 기숙사 식단/공지 검색       최종 답변 생성
@@ -64,6 +64,8 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```bash
 python server.py
 ```
+
+`index.html`은 브라우저에서 직접 열어 웹 UI 데모를 확인할 수 있습니다.
 
 실행하면 아래와 같이 대화형 프롬프트가 표시됩니다.
 
@@ -103,6 +105,12 @@ python server.py
 
 - `FinalAnswer` Pydantic 모델을 정의해 최종 답변을 `answer`와 `sources` 필드로 구조화합니다.
 - `generate_node`에서 LLM 출력을 파싱해 깔끔한 답변을 생성합니다.
+
+### 웹 UI
+
+- 프로젝트 루트에 있는 `index.html`은 단일 파일로 구성된 반응형 채팅 UI입니다.
+- 현재는 정적 템플릿이며, 향후 `/api/chat` 엔드포인트와 연결해 `run_agent()`를 호출할 예정입니다.
+- 브라우저에서 `index.html` 파일을 직접 열어볼 수 있으며, UI 데모를 확인할 수 있습니다.
 
 ## 5. 한계점 및 향후 개선 방향
 
