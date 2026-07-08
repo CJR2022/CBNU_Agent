@@ -49,8 +49,9 @@ logger = logging.getLogger(__name__)
 class FinalAnswer(BaseModel):
     """최종 답변을 구조화하는 Pydantic OutputParser 모델."""
 
-    answer: str = Field(description="사용자 질문에 대한 최종 답변")
-    sources: list[str] = Field(description="참고한 공지 URL 또는 기숙사 식단 페이지 URL 목록")
+    answer: str = Field(description="사용자 질문에 대한 최종 답변. 검색된 정볼만 사용하고, 정보가 없으면 '해당 정보는 확인할 수 없습니다'라고 답변하세요.")
+    sources: list[str] = Field(description="참고한 공지 URL 목록")
+    confidence: str = Field(description="답변 확신도: high, medium, low 중 하나. 근거가 충분하면 high, 부족하면 low")
 
 
 def fetch_html(url: str) -> BeautifulSoup:
@@ -101,8 +102,8 @@ def get_dorm_menu(dorm_name: str = "개성재") -> str:
         if any(pattern in row_text for pattern in today_patterns):
             return f"[{dorm_name} 오늘의 식단]\n{row_text}"
 
-    # 오늘 날짜를 찾지 못하면 전체 테이블 텍스트를 반환한다.
-    return f"[{dorm_name} 식단]\n{table.get_text(separator='\n', strip=True)}"
+    # 오늘 날짜를 찾지 못하면 안내 메시지를 반환한다.
+    return f"[{dorm_name}] 오늘의 식단 정보를 찾을 수 없습니다. 기숙사 식단 페이지에서 확인해 주세요. ({url})"
 
 
 @tool
@@ -116,6 +117,58 @@ def search_notices(query: str) -> str:
         검색된 공지사항 내용을 두 줄 개행으로 연결한 문자열.
     """
     docs = retriever.invoke(query)
+    if not docs:
+        return "관련 공지를 찾을 수 없습니다."
+
+    recent_keywords = ["최근", "최신", "최근 공지", "최신 공지"]
+    if any(keyword in query for keyword in recent_keywords):
+
+        def _sort_key(doc):
+            date_str = doc.metadata.get("date", "")
+            try:
+                return (True, date.fromisoformat(date_str), date_str)
+            except Exception:
+                return (False, date.min, date_str)
+
+        # 최신 공지를 보장하기 위해 원본 파일에서 최근 공지도 함께 포함한다.
+        try:
+            loader = DirectoryLoader(
+                "data/raw/notices",
+                glob="*.txt",
+                loader_cls=TextLoader,
+                loader_kwargs={"encoding": "utf-8"},
+            )
+            raw_documents = loader.load()
+        except Exception:
+            raw_documents = []
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
+        latest_docs = []
+        for raw_doc in raw_documents:
+            for notice_text in _split_into_notices(raw_doc.page_content):
+                meta = _extract_notice_metadata(notice_text)
+                header = (
+                    f"[출처]\n"
+                    f"제목: {meta['title']}\n"
+                    f"날짜: {meta['date']}\n"
+                    f"URL: {meta['url']}\n\n"
+                )
+                notice_doc = Document(
+                    page_content=notice_text,
+                    metadata={"title": meta["title"], "date": meta["date"], "url": meta["url"]},
+                )
+                for chunk in splitter.split_documents([notice_doc]):
+                    chunk.page_content = header + chunk.page_content
+                    latest_docs.append(chunk)
+
+        seen_urls = {doc.metadata.get("url") for doc in docs}
+        for doc in sorted(latest_docs, key=_sort_key, reverse=True)[:10]:
+            if doc.metadata.get("url") not in seen_urls:
+                docs.append(doc)
+                seen_urls.add(doc.metadata.get("url"))
+
+        docs = sorted(docs, key=_sort_key, reverse=True)[:5]
+
     return "\n\n".join(doc.page_content for doc in docs)
 
 
@@ -130,12 +183,24 @@ def _split_into_notices(page_content: str) -> list[str]:
 
 def _extract_notice_metadata(page_content: str) -> dict[str, str]:
     """공지 텍스트의 상단 메타데이터에서 제목, 날짜, URL을 추출한다."""
+    from datetime import datetime
+
     title_match = re.search(r"제목:\s*(.+)", page_content)
     date_match = re.search(r"날짜:\s*(.+)", page_content)
     url_match = re.search(r"URL:\s*(.+)", page_content)
+
+    raw_date = date_match.group(1).strip() if date_match else "알 수 없음"
+    parsed_date = raw_date
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M", "%Y.%m.%d %H:%M", "%Y.%m.%d %H:%M:%S"):
+        try:
+            parsed_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+            break
+        except Exception:
+            continue
+
     return {
         "title": title_match.group(1).strip() if title_match else "알 수 없음",
-        "date": date_match.group(1).strip() if date_match else "알 수 없음",
+        "date": parsed_date,
         "url": url_match.group(1).strip() if url_match else "",
     }
 
@@ -166,7 +231,7 @@ def build_retriever():
                 f"URL: {meta['url']}\n\n"
             )
             notice_doc = Document(
-                page_content=notice_text, metadata=dict(raw_doc.metadata)
+                page_content=notice_text, metadata={"title": meta["title"], "date": meta["date"], "url": meta["url"]}
             )
             for chunk in splitter.split_documents([notice_doc]):
                 chunk.page_content = header + chunk.page_content
@@ -189,6 +254,7 @@ class AgentState(TypedDict):
 
     messages: Annotated[list, add_messages]
     sources: list[str]
+    confidence: str
 
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -200,7 +266,8 @@ understand_prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             "당신은 충북대학교 정보 안내 챗봇입니다. 기숙사 식단 질문이면 get_dorm_menu 도구를, "
-            "공지사항 관련 질문이면 search_notices 도구를, 일반 대화면 바로 답변하세요.",
+            "공지사항 관련 질문이면 search_notices 도구를, 일반 대화면 바로 답변하세요. "
+            "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요.",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
@@ -241,7 +308,10 @@ def generate_node(state: AgentState) -> dict:
                 "system",
                 "당신은 충북대학교 정보 안내 챗봇입니다. "
                 "대화 기록과 검색된 정보를 바탕으로 사용자 질문에 대한 최종 답변을 생성하세요.\n"
-                "검색된 공지를 참고할 때, 해당 공지의 제목과 날짜, URL을 답변에 포함하세요. "
+                "검색된 공지나 조회된 식단 정보에 없는 내용은 절대 지어내지 마세요.\n"
+                "정보가 부족하면 '해당 정보는 확인할 수 없습니다' 또는 '학교 홈페이지를 직접 확인해 주세요'라고 답변하세요.\n"
+                "답변에 참고한 공지의 제목, 날짜, URL을 포함하세요. "
+                "검색 결과 중 날짜가 가장 최근인 공지를 우선적으로 참고하세요. "
                 "sources 필드에는 참고한 공지의 URL을 채워넣으세요.\n"
                 "{format_instructions}",
             ),
@@ -256,11 +326,12 @@ def generate_node(state: AgentState) -> dict:
     try:
         parsed = parser.parse(content)
     except Exception:
-        parsed = FinalAnswer(answer=content, sources=[])
+        parsed = FinalAnswer(answer=content, sources=[], confidence="low")
 
     return {
         "messages": [AIMessage(content=parsed.answer)],
         "sources": parsed.sources,
+        "confidence": parsed.confidence,
     }
 
 
@@ -356,15 +427,24 @@ def run_agent(user_input: str, thread_id: str = "web") -> dict[str, str | list[s
     주어진 user_input을 graph에 전달하고 답변과 참고 출처를 반환한다.
     """
     if not validate_input(user_input):
-        return {"answer": "입력이 너무 짧거나 길어서 처리할 수 없습니다.", "sources": []}
+        return {"answer": "입력이 너무 짧거나 길어서 처리할 수 없습니다.", "sources": [], "confidence": "low"}
 
     config = {"configurable": {"thread_id": thread_id}}
-    state = graph.invoke({"messages": [("human", user_input)], "sources": []}, config)
+    state = graph.invoke({"messages": [("human", user_input)], "sources": [], "confidence": "medium"}, config)
     last_message = state["messages"][-1]
     answer = (
         last_message.content if isinstance(last_message, AIMessage) else str(last_message)
     )
-    return {"answer": answer, "sources": state.get("sources", [])}
+    sources = state.get("sources", [])
+    confidence = state.get("confidence", "medium")
+
+    greeting_keywords = ["안녕", "반가워", "hello", "hi", "처음", "누구"]
+    is_greeting = any(kw in user_input.lower() for kw in greeting_keywords)
+
+    if (confidence == "low" or not sources) and not is_greeting:
+        answer += "\n\n[참고] 답변 근거가 충분하지 않을 수 있습니다. 정확한 정보는 학교 홈페이지를 확인해 주세요."
+
+    return {"answer": answer, "sources": sources, "confidence": confidence}
 
 
 def run_cli() -> None:
@@ -421,7 +501,9 @@ def root():
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     result = run_agent(req.message, req.thread_id)
-    return JSONResponse(result)
+    return JSONResponse(
+        {"answer": result["answer"], "sources": result["sources"], "confidence": result["confidence"]}
+    )
 
 
 if __name__ == "__main__":

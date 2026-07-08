@@ -300,9 +300,10 @@ def extract_notice_detail(detail_url: str, fallback_title: str = "") -> dict:
     if len(content.strip()) < 100:
         pdf_texts = []
         for att in attachments:
-            if ".pdf" in att.lower():
-                # "레이블: URL" 형태에서 URL 추출
-                url = att.split(": ", 1)[-1]
+            url = att.split(": ", 1)[-1] if ": " in att else att
+            is_pdf = ".pdf" in url.lower()
+            is_dynamic = "download" in url.lower() and ("atchmnflNo" in url or "fileNo" in url)
+            if is_pdf or is_dynamic:
                 pdf_text = extract_pdf_text(url)
                 if pdf_text:
                     pdf_texts.append(f"[첨부 PDF 내용]\n{pdf_text}")

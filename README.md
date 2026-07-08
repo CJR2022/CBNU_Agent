@@ -46,7 +46,15 @@ call_tool_node ────────→ generate_node
 pip install -r requirements.txt
 ```
 
-### 2) 환경 변수 설정
+### 2) 공지사항 및 식단 데이터 수집
+
+서버 시작 전에 최신 공지사항과 기숙사 식단 데이터를 수집합니다.
+
+```bash
+python -m src.crawlers.run_all
+```
+
+### 3) 환경 변수 설정
 
 `.env.example`을 참고해 `.env` 파일을 만들고 OpenAI API 키를 입력합니다.
 
@@ -59,7 +67,7 @@ cp .env.example .env
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 3) 에이전트 실행
+### 4) 에이전트 실행
 
 ```bash
 python server.py
@@ -67,7 +75,7 @@ python server.py
 
 `index.html`은 브라우저에서 직접 열어 웹 UI 데모를 확인할 수 있습니다.
 
-### 웹 UI로 실행
+### 5) 웹 UI로 실행
 
 ```bash
 uvicorn server:app --reload
@@ -112,8 +120,9 @@ uvicorn server:app --reload
 
 ### OutputParser
 
-- `FinalAnswer` Pydantic 모델을 정의해 최종 답변을 `answer`와 `sources` 필드로 구조화합니다.
+- `FinalAnswer` Pydantic 모델을 정의해 최종 답변을 `answer`, `sources`, `confidence` 필드로 구조화합니다.
 - `generate_node`에서 LLM 출력을 파싱해 깔끔한 답변을 생성하고, 참고한 공지 URL을 `sources`에 담아 웹 UI와 API 응답에 함께 전달합니다.
+- `confidence`는 `high`, `medium`, `low` 중 하나로, 근거가 불충분하면 `low`를 반환하고 사용자에게 학교 홈페이지 확인을 안내합니다.
 
 ### 웹 UI
 
