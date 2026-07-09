@@ -239,21 +239,37 @@ def search_notices(query: str) -> str:
         target_sources = {"main", "ece", "sw", "dorm"}
         fallback_sources = set()
 
-    def _collect(targets: set[str]):
+    # '자세히', '상세히' 등의 키워드가 있으면 같은 공지의 여러 chunk를 함께 반환한다.
+    is_detail_query = any(k in query for k in ("자세히", "상세히", "전체", "내용"))
+    max_per_url = 3 if is_detail_query else 1
+
+    def _collect(targets: set[str], max_per_url: int = 1):
         collected: list[Document] = []
-        local_seen = set()
+        local_seen: dict[str, list[Document]] = {}
         for q in queries:
             for doc in retriever.invoke(q):
                 if doc.metadata.get("source") not in targets:
                     continue
-                url = doc.metadata.get("url")
-                if url and url not in local_seen and url not in seen_urls:
-                    local_seen.add(url)
+                url = doc.metadata.get("url") or ""
+                content = doc.page_content or ""
+                # '[첨부 PDF 내용]' placeholder만 담긴 chunk는 실제 내용이 없으므로 스킵한다.
+                stripped = content.strip()
+                if stripped.endswith("[첨부 PDF 내용]"):
+                    continue
+                if url:
+                    existing = local_seen.setdefault(url, [])
+                    # 내용이 완전히 같은 chunk는 중복 제거한다.
+                    if any(d.page_content == content for d in existing):
+                        continue
+                    existing.append(doc)
+                    if len(existing) <= max_per_url and url not in seen_urls:
+                        collected.append(doc)
+                else:
                     collected.append(doc)
         return collected
 
     # 1순위: 사용자가 원한 출처로만 검색
-    docs = _collect(target_sources)
+    docs = _collect(target_sources, max_per_url=max_per_url)
     seen_urls = {doc.metadata.get("url") for doc in docs if doc.metadata.get("url")}
 
     # 2순위: 식단/출처 fallback
