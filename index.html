@@ -196,9 +196,15 @@
         const input = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
 
-        function renderMarkdownLinks(text) {
-            // [텍스트](URL) 형태의 Markdown 링크를 HTML a 태그로 변환
-            return text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        function renderMarkdown(text) {
+            // HTML 이스케이프된 텍스트를 받아 간단한 Markdown을 HTML로 변환
+            // 1. 볼드 **텍스트** → <strong>텍스트</strong>
+            let html = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            // 2. [텍스트](URL) → <a href="URL">텍스트</a>
+            html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+            // 3. 단독 URL → 클릭 가능한 링크
+            html = html.replace(/(https?:\/\/[^\s<\]\)"]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+            return html;
         }
 
         function escapeHtml(text) {
@@ -215,8 +221,8 @@
             wrapper.className = `message ${sender}`;
 
             const textDiv = document.createElement('div');
-            // HTML 이스케이프 후 Markdown 링크만 활성화
-            textDiv.innerHTML = renderMarkdownLinks(escapeHtml(text)).replace(/\n/g, '<br>');
+            // HTML 이스케이프 후 Markdown 변환
+            textDiv.innerHTML = renderMarkdown(escapeHtml(text)).replace(/\n/g, '<br>');
             wrapper.appendChild(textDiv);
 
             if (confidence === 'low') {
@@ -229,10 +235,18 @@
             }
 
             if (sources && sources.length > 0) {
-                const sourcesDiv = document.createElement('div');
-                sourcesDiv.className = 'sources';
-                sourcesDiv.textContent = '출처:';
+                const details = document.createElement('details');
+                details.className = 'sources';
+                details.style.marginTop = '0.5rem';
+
+                const summary = document.createElement('summary');
+                summary.textContent = `출처 (${sources.length}개)`;
+                summary.style.cursor = 'pointer';
+                summary.style.color = 'var(--primary)';
+                details.appendChild(summary);
+
                 const ul = document.createElement('ul');
+                ul.style.marginTop = '0.25rem';
                 sources.forEach(url => {
                     const li = document.createElement('li');
                     const a = document.createElement('a');
@@ -243,8 +257,8 @@
                     li.appendChild(a);
                     ul.appendChild(li);
                 });
-                sourcesDiv.appendChild(ul);
-                wrapper.appendChild(sourcesDiv);
+                details.appendChild(ul);
+                wrapper.appendChild(details);
             }
 
             chat.appendChild(wrapper);
