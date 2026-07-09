@@ -67,9 +67,17 @@ _SOURCE_KEYWORDS = {
     "ece": ["전자정보"],
     "sw": ["소프트웨어", "컴공"],
     "main": ["학교", "학사", "본교"],
+    "academic_calendar": ["학사일정", "개강", "수강신청", "수강 신청", "등록금 납부", "휴학", "복학", "졸업", "계절수업", "학위수여식", "입학식"],
 }
 
+_ACADEMIC_CALENDAR_KEYWORDS = _SOURCE_KEYWORDS["academic_calendar"]
+
 _MEAL_KEYWORDS = ["메뉴", "식단", "아침", "점심", "저녁", "밥"]
+
+
+def _is_academic_calendar_query(query: str) -> bool:
+    """query에서 학사일정 관련 키워드를 감지한다."""
+    return any(keyword in query for keyword in _ACADEMIC_CALENDAR_KEYWORDS)
 
 
 def _is_meal_query(query: str) -> bool:
@@ -200,7 +208,7 @@ def search_notices(query: str) -> str:
     queries = _expand_query(query, kst)
 
     docs: list[Document] = []
-    seen_urls = set()
+    seen_keys = set()
 
     # 식단 질문에서 날짜(오늘/어제/내일/YYYY-MM-DD)가 명시되면 메타데이터 필터로 정확히 검색
     if is_meal:
@@ -219,8 +227,8 @@ def search_notices(query: str) -> str:
                 date_docs = vectorstore.similarity_search("", k=100, filter=filter_dict)
                 for doc in date_docs:
                     url = doc.metadata.get("url")
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
+                    if url and url not in seen_keys:
+                        seen_keys.add(url)
                         docs.append(doc)
             if docs:
                 docs = docs[:10]
@@ -230,71 +238,75 @@ def search_notices(query: str) -> str:
         # 식단 질문은 dorm_menu를 우선적으로 검색한다.
         target_sources = {"dorm_menu"}
         fallback_sources = {"dorm"}
+    elif _is_academic_calendar_query(query):
+        # 학사일정 관련 질문은 academic_calendar 소스만 우선 검색한다.
+        target_sources = {"academic_calendar"}
+        fallback_sources = set()
     elif sources:
         # 사용자가 출처(기숙사/전자정보/소프트웨어/학교)를 명시하면 해당 소스만 검색한다.
         target_sources = set(sources)
         fallback_sources = set()
     else:
         # 출처가 명시되지 않으면 전체를 검색한다.
-        target_sources = {"main", "ece", "sw", "dorm"}
+        target_sources = {"main", "ece", "sw", "dorm", "academic_calendar"}
         fallback_sources = set()
 
-    # '자세히', '상세히' 등의 키워드가 있으면 같은 공지의 여러 chunk를 함께 반환한다.
+    # '자세히', '상세히' 등의 키워드가 있으면 같은 문서의 여러 chunk를 함께 반환한다.
     is_detail_query = any(k in query for k in ("자세히", "상세히", "전체", "내용"))
     max_per_url = 3 if is_detail_query else 1
 
     def _collect(targets: set[str], max_per_url: int = 1):
         local_seen: dict[str, list[Document]] = {}
-        url_first_index: dict[str, int] = {}
-        no_url_docs: list[Document] = []
+        key_first_index: dict[str, int] = {}
+        no_key_docs: list[Document] = []
 
         for q in queries:
             for idx, doc in enumerate(retriever.invoke(q)):
                 if doc.metadata.get("source") not in targets:
                     continue
-                url = doc.metadata.get("url") or ""
+                key = _doc_key(doc)
                 content = doc.page_content or ""
                 # '[첨부 PDF 내용]' placeholder만 담긴 chunk는 실제 내용이 없으므로 스킵한다.
                 stripped = content.strip()
                 if stripped.endswith("[첨부 PDF 내용]"):
                     continue
-                if not url:
-                    no_url_docs.append(doc)
+                if not key:
+                    no_key_docs.append(doc)
                     continue
-                existing = local_seen.setdefault(url, [])
+                existing = local_seen.setdefault(key, [])
                 # 내용이 완전히 같은 chunk는 중복 제거한다.
                 if any(d.page_content == content for d in existing):
                     continue
                 existing.append(doc)
-                if url not in url_first_index:
-                    url_first_index[url] = idx
+                if key not in key_first_index:
+                    key_first_index[key] = idx
 
-        # 같은 URL 내에서는 가장 긴 chunk를 우선 선택한다.
+        # 같은 키 내에서는 가장 긴 chunk를 우선 선택한다.
         # 이렇게 하면 제목/메타데이터만 담긴 placeholder-like chunk보다
         # 실제 본문이 담긴 chunk가 먼저 선택된다.
         collected: list[Document] = []
-        for url in sorted(url_first_index, key=lambda u: url_first_index[u]):
-            if url in seen_urls:
+        for key in sorted(key_first_index, key=lambda k: key_first_index[k]):
+            if key in seen_keys:
                 continue
             sorted_docs = sorted(
-                local_seen[url], key=lambda d: len(d.page_content or ""), reverse=True
+                local_seen[key], key=lambda d: len(d.page_content or ""), reverse=True
             )
             collected.extend(sorted_docs[:max_per_url])
-        collected.extend(no_url_docs)
+        collected.extend(no_key_docs)
         return collected
 
     # 1순위: 사용자가 원한 출처로만 검색
     docs = _collect(target_sources, max_per_url=max_per_url)
-    seen_urls = {doc.metadata.get("url") for doc in docs if doc.metadata.get("url")}
+    seen_keys = {_doc_key(doc) for doc in docs}
 
     # 2순위: 식단/출처 fallback
     if not docs and fallback_sources:
         docs = _collect(fallback_sources)
-        seen_urls = {doc.metadata.get("url") for doc in docs if doc.metadata.get("url")}
+        seen_keys = {_doc_key(doc) for doc in docs}
 
     # 3순위: 출처가 명시되지 않은 경우 전체 검색
-    if not docs and not sources and not is_meal:
-        docs = _collect({"main", "ece", "sw", "dorm"})
+    if not docs and not sources and not is_meal and not _is_academic_calendar_query(query):
+        docs = _collect({"main", "ece", "sw", "dorm", "academic_calendar"})
 
     recent_keywords = ["최근", "최신"]
     if any(keyword in query for keyword in recent_keywords):
@@ -303,8 +315,8 @@ def search_notices(query: str) -> str:
             build_retriever()
         vectorstore = _vectorstore
         all_recent_docs: list[Document] = []
-        recent_seen_urls = set()
-        for src in target_sources:
+        recent_seen_keys = set()
+        for src in target_sources | {"academic_calendar"}:
             # Chroma collection에서 필터 조건에 맞는 모든 문서를 직접 가져온다.
             # similarity_search("", k=...)는 빈 쿼리에서 임의의 순서로 일부만 반환할 수 있으므로,
             # 날짜 기준 최신 문서를 놓치지 않도록 전체 문서를 조회한다.
@@ -316,12 +328,11 @@ def search_notices(query: str) -> str:
                 if not content:
                     continue
                 meta = meta or {}
-                url = meta.get("url")
-                if url and url not in recent_seen_urls:
-                    recent_seen_urls.add(url)
-                    all_recent_docs.append(
-                        Document(page_content=content, metadata=meta, id=doc_id)
-                    )
+                doc = Document(page_content=content, metadata=meta, id=doc_id)
+                key = _doc_key(doc)
+                if key and key not in recent_seen_keys:
+                    recent_seen_keys.add(key)
+                    all_recent_docs.append(doc)
         docs = sorted(all_recent_docs, key=_sort_key, reverse=True)[:5]
     else:
         docs = docs[:10]
@@ -339,6 +350,20 @@ def _sort_key(doc: Document):
         return (True, date.fromisoformat(date_str), date_str)
     except Exception:
         return (False, date.min, date_str)
+
+
+def _doc_key(doc: Document) -> str:
+    """문서의 중복을 판별할 키를 생성한다.
+
+    학사일정은 모든 항목이 동일한 목록 URL을 공유하므로 제목과 기간으로 구분한다.
+    """
+    source = doc.metadata.get("source") or ""
+    url = doc.metadata.get("url") or ""
+    title = doc.metadata.get("title") or ""
+    date = doc.metadata.get("date") or ""
+    if source == "academic_calendar":
+        return f"academic_calendar::{title}::{date}"
+    return url
 
 
 def _source_name_from_path(path: str) -> str:
@@ -396,6 +421,33 @@ def _extract_menu_metadata(page_content: str) -> dict[str, str]:
 
     return {
         "dorm": dorm_match.group(1).strip() if dorm_match else "기숙사",
+        "date": parsed_date,
+        "url": url_match.group(1).strip() if url_match else "",
+    }
+
+
+def _extract_academic_calendar_metadata(page_content: str) -> dict[str, str]:
+    """학사일정 텍스트의 상단 메타데이터에서 제목, 기간, URL을 추출한다."""
+    title_match = re.search(r"제목:\s*(.+)", page_content)
+    period_match = re.search(r"기간:\s*(.+)", page_content)
+    url_match = re.search(r"URL:\s*(.+)", page_content)
+
+    title = title_match.group(1).strip() if title_match else ""
+    period = period_match.group(1).strip() if period_match else ""
+    parsed_date = ""
+    # 기간에서 YYYY.MM.DD. 또는 MM.DD.(요일) 패턴의 시작일 추출
+    date_candidates = re.findall(r"(\d{4})?[./]?(\d{1,2})[./](\d{1,2})\.", period)
+    if date_candidates:
+        year, month, day = date_candidates[0]
+        if not year:
+            year = "2026"  # 학사일정 파일명/페이지에서 추론한 연도
+        try:
+            parsed_date = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        except Exception:
+            parsed_date = ""
+
+    return {
+        "title": title,
         "date": parsed_date,
         "url": url_match.group(1).strip() if url_match else "",
     }
@@ -487,6 +539,28 @@ def build_retriever(force_rebuild: bool = False):
             chunk.page_content = header + chunk.page_content
             split_docs.append(chunk)
 
+    # 학사일정
+    calendar_loader = DirectoryLoader(
+        "data/raw/academic_calendar",
+        glob="*.txt",
+        loader_cls=TextLoader,
+        loader_kwargs={"encoding": "utf-8"},
+    )
+    for raw_doc in calendar_loader.load():
+        for schedule_text in _split_into_notices(raw_doc.page_content):
+            meta = _extract_academic_calendar_metadata(schedule_text)
+            meta["source"] = "academic_calendar"
+            header = (
+                f"[학사일정]\n"
+                f"제목: {meta['title']}\n"
+                f"기간: {meta['date']}\n"
+                f"URL: {meta['url']}\n\n"
+            )
+            schedule_doc = Document(page_content=schedule_text, metadata=meta)
+            for chunk in splitter.split_documents([schedule_doc]):
+                chunk.page_content = header + chunk.page_content
+                split_docs.append(chunk)
+
     if _vectorstore is None and _vectorstore_exists():
         _vectorstore = Chroma(
             persist_directory=_PERSIST_DIR,
@@ -549,12 +623,12 @@ understand_prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             "당신은 충북대학교 정보 안내 챗봇입니다.\n"
-            "학교/기숙사/학과 공지사항이나 기숙사 식단에 대한 구체적인 질문은 반드시 search_notices 도구를 사용하세요. "
+            "학교/기숙사/학과 공지사항, 기숙사 식단, 학사일정에 대한 구체적인 질문은 반드시 search_notices 도구를 사용하세요. "
             "일반 대화면 바로 답변하세요.\n"
-            "예시: '기숙사 생활관비 납부 언제까지야?', '전자정보대학 장학 공지 있어?', "
-            "'기숙사 입퇴거 날짜 알려줘', '오늘 양성재 메뉴 뭐야?' → 모두 search_notices를 호출하세요.\n"
+            "예시: '기숙사 생활관비 납부 언제까지야?', '전자정볼대학 장학 공지 있어?', "
+            "'기숙사 입퇴거 날짜 알려줘', '오늘 양성재 메뉴 뭐야?', '2학기 개강 날짜 알려줘', '수강신청 일정 어때?' → 모두 search_notices를 호출하세요.\n"
             "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요. "
-            "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어, 학교/학사/본교)를 언급한 경우, "
+            "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어, 학교/학사/본교)나 학사일정을 언급한 경우, "
             "search_notices의 query 인자에 해당 출처 키워드를 반드시 포함하세요.",
         ),
         MessagesPlaceholder(variable_name="messages"),
@@ -639,13 +713,16 @@ def generate_node(state: AgentState) -> dict:
                 "system",
                 "당신은 충북대학교 정보 안내 챗봇입니다. "
                 "대화 기록과 검색된 정보를 바탕으로 사용자 질문에 대한 최종 답변을 생성하세요.\n"
-                "검색된 공지나 식단 정보 중에서 사용자 질문과 직접 관련된 내용을 찾아 답변하세요. "
-                "검색된 공지나 식단 정보에 없는 내용은 절대 지어내지 마세요.\n"
+                "검색된 공지, 식단, 학사일정 정보 중에서 사용자 질문과 직접 관련된 내용을 찾아 답변하세요. "
+                "검색된 정보에 없는 내용은 절대 지어내지 마세요.\n"
                 "정보가 부족하면 '해당 정보는 확인할 수 없습니다' 또는 '학교 홈페이지를 직접 확인해 주세요'라고 답변하세요. "
                 "사용자가 특정 날짜(오늘, 내일, 다음 주 등)의 식단이나 공지를 물어보고 해당 날짜의 데이터가 검색되지 않으면, "
                 "절대로 다른 날짜의 데이터를 언급하거나 덧붙이지 마세요. "
                 "sources 필드도 비우고, '해당 날짜의 정보는 아직 확인할 수 없습니다'라고만 답변하세요.\n"
-                "답변에 참고한 공지/식단의 제목(또는 기숙사), 날짜, URL을 포함하세요. "
+                "사용자가 학사일정(개강, 수강신청, 등록금 납부, 휴학, 복학, 졸업, 계절수업, 학위수여식, 입학식 등)을 물어본 경우, "
+                "검색된 학사일정 항목의 제목과 일정(날짜), URL을 정확히 포함하세요. "
+                "학사일정과 공지를 동시에 검색한 경우, 학사일정은 학사일정끼리 정리하고 공지는 공지끼리 정리하세요.\n"
+                "답변에 참고한 공지/식단/학사일정의 제목(또는 기숙사), 날짜, URL을 포함하세요. "
                 "검색 결과 중 날짜가 가장 최근인 문서를 우선적으로 참고하세요. "
                 "사용자가 '최근'이나 '최신' 공지를 물어본 경우, 검색된 공지들을 날짜 순서대로 목록으로 정리하여 보여주세요. "
                 "sources 필드에는 참고한 문서의 URL을 정확히 채워넣으세요.\n"

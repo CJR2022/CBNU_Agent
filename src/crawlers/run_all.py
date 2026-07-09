@@ -6,6 +6,7 @@ import sys
 # 프로젝트 루트를 path에 추가해 server.py 임포트 가능하게 한다
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+from src.crawlers.academic_calendar_crawler import crawl_academic_calendar
 from src.crawlers.dorm_crawler import crawl_all_dorm_menus
 from src.crawlers.notice_crawler import crawl_all_notices
 
@@ -15,6 +16,8 @@ def run_all():
     crawl_all_notices()
     print("=== 기숙사 식단 크롤링 시작 ===")
     crawl_all_dorm_menus()
+    print("=== 학사일정 크롤링 시작 ===")
+    crawl_academic_calendar()
     print("=== 벡터스토어 재구축 시작 ===")
     from server import rebuild_vectorstore
     rebuild_vectorstore()
