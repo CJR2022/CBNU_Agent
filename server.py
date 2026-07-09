@@ -316,7 +316,7 @@ def search_notices(query: str) -> str:
         vectorstore = _vectorstore
         all_recent_docs: list[Document] = []
         recent_seen_keys = set()
-        for src in target_sources | {"academic_calendar"}:
+        for src in target_sources:
             # Chroma collection에서 필터 조건에 맞는 모든 문서를 직접 가져온다.
             # similarity_search("", k=...)는 빈 쿼리에서 임의의 순서로 일부만 반환할 수 있으므로,
             # 날짜 기준 최신 문서를 놓치지 않도록 전체 문서를 조회한다.
