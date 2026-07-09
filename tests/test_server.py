@@ -226,11 +226,9 @@ def test_final_answer_parses(server_mod):
     answer = server_mod.FinalAnswer(
         answer="오늘 양성재 메뉴는 김치찌개입니다.",
         sources=["https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20041&type=2"],
-        confidence="high",
     )
     assert answer.answer == "오늘 양성재 메뉴는 김치찌개입니다."
     assert answer.sources[0].startswith("https://dorm.chungbuk.ac.kr")
-    assert answer.confidence == "high"
 
 
 def test_middleware_rejects_empty_input(server_mod):

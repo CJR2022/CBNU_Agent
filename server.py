@@ -53,7 +53,6 @@ class FinalAnswer(BaseModel):
 
     answer: str = Field(description="사용자 질문에 대한 최종 답변. 검색된 정보만 사용하고, 정보가 없으면 '해당 정보는 확인할 수 없습니다'라고 답변하세요.")
     sources: list[str] = Field(description="참고한 공지/식단 URL 목록")
-    confidence: Literal["high", "medium", "low"] = Field(description="답변 확신도: high, medium, low 중 하나. 근거가 충분하면 high, 부족하면 low")
 
 
 def fetch_html(url: str) -> BeautifulSoup:
@@ -491,7 +490,6 @@ class AgentState(TypedDict):
 
     messages: Annotated[list, add_messages]
     sources: list[str]
-    confidence: str
     valid_input: bool
 
 
@@ -583,15 +581,6 @@ def _extract_urls_from_text(text: str) -> list[str]:
     return urls
 
 
-def _resolve_confidence(answer: str, sources: list[str]) -> str:
-    """답변 내용과 출처 존재 여부에 따라 confidence를 결정한다."""
-    if not sources:
-        return "low"
-    if any(phrase in answer for phrase in ("확인할 수 없습니다", "학교 홈페이지를 직접 확인")):
-        return "medium"
-    return "high"
-
-
 def generate_node(state: AgentState) -> dict:
     """대화 기록과 도구 결과를 바탕으로 최종 답변을 생성한다."""
     parser = PydanticOutputParser(pydantic_object=FinalAnswer)
@@ -623,17 +612,14 @@ def generate_node(state: AgentState) -> dict:
     try:
         parsed = parser.parse(content)
     except Exception:
-        parsed = FinalAnswer(answer=content, sources=[], confidence="low")
+        parsed = FinalAnswer(answer=content, sources=[])
 
     # 최종 답변에 실제로 등장하는 URL만 sources로 유지한다.
     parsed.sources = _extract_urls_from_text(parsed.answer)
 
-    parsed.confidence = _resolve_confidence(parsed.answer, parsed.sources)
-
     return {
         "messages": [AIMessage(content=parsed.answer)],
         "sources": parsed.sources,
-        "confidence": parsed.confidence,
     }
 
 
@@ -728,14 +714,13 @@ def run_agent(user_input: str, thread_id: str = "web") -> dict[str, str | list[s
     주어진 user_input을 graph에 전달하고 답변과 참고 출처를 반환한다.
     """
     if not validate_input(user_input):
-        return {"answer": "입력이 너무 짧거나 길어서 처리할 수 없습니다.", "sources": [], "confidence": "low"}
+        return {"answer": "입력이 너무 짧거나 길어서 처리할 수 없습니다.", "sources": []}
 
     config = {"configurable": {"thread_id": thread_id}}
     state = graph.invoke(
         {
             "messages": [("human", user_input)],
             "sources": [],
-            "confidence": "medium",
             "valid_input": True,
         },
         config,
@@ -745,15 +730,8 @@ def run_agent(user_input: str, thread_id: str = "web") -> dict[str, str | list[s
         last_message.content if isinstance(last_message, AIMessage) else str(last_message)
     )
     sources = state.get("sources", [])
-    confidence = state.get("confidence", "medium")
 
-    greeting_keywords = ["안녕", "반가워", "hello", "hi", "처음", "누구"]
-    is_greeting = any(kw in user_input.lower() for kw in greeting_keywords)
-
-    if (confidence == "low" or not sources) and not is_greeting:
-        answer += "\n\n[참고] 답변 근거가 충분하지 않을 수 있습니다. 정확한 정보는 학교 홈페이지를 확인해 주세요."
-
-    return {"answer": answer, "sources": sources, "confidence": confidence}
+    return {"answer": answer, "sources": sources}
 
 
 def run_cli() -> None:
@@ -787,7 +765,6 @@ def run_cli() -> None:
             {
                 "messages": [("human", user_input)],
                 "sources": [],
-                "confidence": "medium",
                 "valid_input": True,
             },
             config,
@@ -819,7 +796,7 @@ def root():
 def chat(req: ChatRequest):
     result = run_agent(req.message, req.thread_id)
     return JSONResponse(
-        {"answer": result["answer"], "sources": result["sources"], "confidence": result["confidence"]}
+        {"answer": result["answer"], "sources": result["sources"]}
     )
 
 

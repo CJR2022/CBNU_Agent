@@ -219,7 +219,7 @@
                 .replace(/'/g, '&#039;');
         }
 
-        function appendMessage(text, sender, sources = [], confidence = '') {
+        function appendMessage(text, sender, sources = []) {
             const wrapper = document.createElement('div');
             wrapper.className = `message ${sender}`;
 
@@ -227,15 +227,6 @@
             // HTML 이스케이프 후 Markdown 변환
             textDiv.innerHTML = renderMarkdown(escapeHtml(text)).replace(/\n/g, '<br>');
             wrapper.appendChild(textDiv);
-
-            if (confidence === 'low') {
-                const warning = document.createElement('div');
-                warning.style.marginTop = '0.5rem';
-                warning.style.fontSize = '0.8125rem';
-                warning.style.color = '#c58940';
-                warning.textContent = '[참고] 답변 근거가 충분하지 않을 수 있습니다.';
-                wrapper.appendChild(warning);
-            }
 
             if (sources && sources.length > 0) {
                 const details = document.createElement('details');
@@ -300,7 +291,7 @@
                     body: JSON.stringify({ message: text, thread_id: 'web' })
                 });
                 const data = await res.json();
-                appendMessage(data.answer, 'bot', data.sources, data.confidence);
+                appendMessage(data.answer, 'bot', data.sources);
             } catch (err) {
                 appendMessage('서버와 통신 중 오류가 발생했습니다.', 'bot');
             } finally {
