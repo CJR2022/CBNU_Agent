@@ -22,21 +22,57 @@
 
 ## 2. 전체 아키텍처 설명
 
+LangGraph 기반의 `StateGraph`로 동작하며, `MemorySaver`를 사용해 대화 맥락을 유지합니다.
+입력은 `middleware`에서 검증되고, 질문 유형에 따라 `search_notices` 도구를 호출하거나 바로 답변을 생성합니다.
+
 ```
 사용자 입력
     ↓
 middleware (입력 검증 + 로깅)
     ↓
-understand_node (도구 선택/일반 대화 판단)
+understand_node (도구 호출/일반 대화 판단)
     ↓ (조건 분기)
 call_tool_node ────────→ generate_node
     ↓                        ↓
-기숙사 식단/공지 검색       최종 답변 생성
+search_notices            최종 답변 생성
+(공지 + 식단 통합 검색)
 ```
 
-- **LangGraph** 기반의 `StateGraph`로 동작하며, `MemorySaver`를 사용해 대화 맥락을 유지합니다.
-- 입력은 `middleware`에서 검증되고, 질문 유형에 따라 도구를 호출하거나 바로 답변을 생성합니다.
-- 전체 워크플로우 다이어그램은 [docs/workflow_diagram.md](docs/workflow_diagram.md)에서 확인할 수 있습니다.
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+    __start__([<p>__start__</p>]):::first
+    middleware(middleware)
+    understand_node(understand_node)
+    call_tool_node(call_tool_node)
+    generate_node(generate_node)
+    __end__([<p>__end__</p>]):::last
+    __start__ --> middleware;
+    call_tool_node --> generate_node;
+    middleware -.-> __end__;
+    middleware -.-> understand_node;
+    understand_node -.-> call_tool_node;
+    understand_node -.-> generate_node;
+    generate_node --> __end__;
+    classDef default fill:#f2f0ff,line-height:1.2
+    classDef first fill-opacity:0
+    classDef last fill:#bfb6fc
+```
+
+### 노드 설명
+
+| 노드 | 역할 |
+|------|------|
+| `middleware` | 사용자 입력을 검증하고, 실행 로그를 남깁니다. |
+| `understand_node` | 사용자 질문을 이해해 필요한 도구를 선택하거나 일반 대화에 바로 답변합니다. |
+| `call_tool_node` | 선택된 도구(`search_notices`)를 실행합니다. |
+| `generate_node` | 도구 결과와 대화 기록을 바탕으로 최종 답변을 생성합니다. |
+
+분기(점선 화살표)는 조건 엣지(conditional edge)로, middleware에서 입력이 유효하지 않으면 바로 종료하고, understand_node에서 도구 호출이 필요한 경우에만 `call_tool_node`로 이동합니다.
 
 ## 3. 설치 및 실행 방법
 
@@ -46,15 +82,7 @@ call_tool_node ────────→ generate_node
 pip install -r requirements.txt
 ```
 
-### 2) 공지사항 및 식단 데이터 수집
-
-서버 시작 전에 최신 공지사항과 기숙사 식단 데이터를 수집합니다.
-
-```bash
-python -m src.crawlers.run_all
-```
-
-### 3) 환경 변수 설정
+### 2) 환경 변수 설정
 
 `.env.example`을 참고해 `.env` 파일을 만들고 OpenAI API 키를 입력합니다.
 
@@ -67,13 +95,17 @@ cp .env.example .env
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 4) CLI로 실행
+### 3) 공지사항 및 식단 데이터 수집
 
-서버 시작 전에 최신 공지사항 데이터를 수집해야 합니다.
+서버 시작 전에 최신 공지사항과 기숙사 식단 데이터를 수집합니다.
 
 ```bash
 python -m src.crawlers.run_all
 ```
+
+`run_all.py`를 실행하면 `data/raw/notices/`와 `data/raw/dorm_menu/`에 텍스트 파일이 저장되고, 벡터스토어가 최신 데이터로 갱신됩니다.
+
+### 4) CLI로 실행
 
 ```bash
 python server.py
@@ -89,36 +121,24 @@ python server.py
 에이전트: 안녕하세요! 충북대학교 정보 안내 챗봇입니다.
 ```
 
-### 5) 웹 UI로 실행
-
-서버 시작 전에 최신 공지사항 데이터를 수집해야 합니다.
-
-```bash
-python -m src.crawlers.run_all
-```
-
-```bash
-uvicorn server:app --reload
-```
-
-브라우저에서 http://localhost:8000 열기
-
-`index.html`은 `/api/chat` 엔드포인트를 호출하므로, 반드시 `uvicorn server:app`으로 백엔드를 실행한 뒤 브라우저에서 접속해야 합니다. 파일을 직접 열어도 API가 동작하지 않습니다.
+> 참고: `server.py`는 FastAPI 앱(`app`)도 노출하며 `/api/chat` 엔드포인트를 제공합니다. 외부 클라이언트와 연동할 때 사용할 수 있습니다.
 
 ## 4. 사용된 주요 기술
 
 ### Tool
 
-- `search_notices(query: str)`: 미리 구축한 Chroma 벡터스토어에서 사용자 질문과 관련된 공지사항 및 기숙사 식단 내용을 검색합니다. 검색 결과에는 공지 제목·날짜·URL 또는 기숙사·날짜·URL 메타데이터가 포함되어 답변에 출처로 노출됩니다.
+- `search_notices(query: str)`: 미리 구축한 Chroma 벡터스토어에서 사용자 질문과 관련된 공지사항 및 기숙사 식단 내용을 검색합니다.
+  - 출처 키워드("기숙사"/"생활관", "전자정보", "소프트웨어", "학교"/"학사")가 포함되면 해당 소스를 우선 검색합니다.
   - 날짜 키워드("오늘", "어제", "내일", "이번 주", "다음 주")는 KST 기준 절대 날짜로 변환되어 검색에 활용됩니다.
-  - 출처 키워드("기숙사"/"생활관", "전자정보", "소프트웨어", "학교"/"학사")가 포함되면 해당 소스로 필터링하거나 우선순위를 둡니다.
-  - 식단/메뉴 키워드("메뉴", "식단", "아침", "점심", "저녁", "밥")가 포함되면 기숙사 식단 문서를 우선 검색하고, 결과가 없을 때 기숙사 공지로 fallback 합니다.
+  - 식단/메뉴 키워드("메뉴", "식단", "아침", "점심", "저녁", "밥")가 포함되면 기숙사 식단 문서를 우선 검색합니다.
+  - 검색 결과에는 공지 제목·날짜·URL 또는 기숙사·날짜·URL 메타데이터가 포함되어 답변에 출처로 노출됩니다.
 
 ### RAG
 
 - `data/raw/notices/`와 `data/raw/dorm_menu/`에 있는 텍스트 파일들을 `DirectoryLoader`로 읽고, `RecursiveCharacterTextSplitter`로 분할합니다.
 - 각 공지 문서의 제목, 날짜, URL과 각 식단 문서의 기숙사, 날짜, URL을 chunk 앞에 추가해 검색 결과에 출처 정보를 담습니다.
 - `OpenAIEmbeddings`로 임베딩한 뒤 `Chroma` 벡터스토어에 저장합니다.
+- Chroma 벡터스토어는 `chroma_db/` 디렉터리에 영속화되며, 크롤링을 실행할 때만 `force_rebuild=True`로 갱신됩니다.
 - 질문이 들어오면 `retriever.invoke(query)`로 유사도 기반 문서를 검색해 답변에 활용합니다.
 
 ### Memory
@@ -134,15 +154,9 @@ uvicorn server:app --reload
 
 ### OutputParser
 
-- `FinalAnswer` Pydantic 모델을 정의해 최종 답변을 `answer`, `sources`, `confidence` 필드로 구조화합니다.
-- `generate_node`에서 LLM 출력을 파싱해 깔끔한 답변을 생성하고, 참고한 공지 URL을 `sources`에 담아 웹 UI와 API 응답에 함께 전달합니다.
-- `confidence`는 `high`, `medium`, `low` 중 하나로, 근거가 불충분하면 `low`를 반환하고 사용자에게 학교 홈페이지 확인을 안내합니다.
-
-### 웹 UI
-
-- 프로젝트 루트에 있는 `index.html`은 단일 파일로 구성된 반응형 채팅 UI입니다.
-- `/api/chat` 엔드포인트와 연결해 `run_agent()`를 호출하며, 답변 아래에 참고 출처 URL을 클릭 가능한 링크로 표시합니다.
-- 웹 UI를 확인하려면 `uvicorn server:app`으로 서버를 실행한 뒤 브라우저에서 http://localhost:8000 에 접속하세요.
+- `FinalAnswer` Pydantic 모델을 정의해 최종 답변을 `answer`, `sources` 필드로 구조화합니다.
+- `generate_node`에서 LLM 출력을 파싱해 깔끔한 답변을 생성하고, 참고한 공지 URL을 `sources`에 담아 API 응답에 함께 전달합니다.
+- 최종 답변에 실제로 인용된 URL만 `sources`로 유지합니다.
 
 ## 5. 한계점 및 향후 개선 방향
 
@@ -150,11 +164,12 @@ uvicorn server:app --reload
 
 - **실시간 데이터 의존**: 공지사항과 기숙사 식단은 주기적 크롤링 이후에 검색할 수 있어 최신 정보가 바로 반영되지 않을 수 있습니다.
 - **크롤링 불안정성**: 웹사이트 구조가 변경되면 CSS 선택자를 직접 수정해야 합니다.
-- **출처 표시**: ~~RAG 검색 결과에서 참고한 원본 URL을 답변에 명확히 포함하는 기능이 추가로 필요합니다.~~ 공지/식단 메타데이터(제목/기숙사, 날짜, URL)를 chunk에 포함하고, `FinalAnswer.sources`를 통해 답변과 함께 웹 UI에 노출합니다.
+- **학교 메인 공지 본문 노이즈**: 학교 메인 공지 본문 상단에 메뉴/네비게이션 텍스트가 섞여 들어가는 경우가 있습니다.
+- **출처 표시**: 검색 결과에서 참고한 원본 URL을 답변에 노출하고 있으나, LLM이 출처를 생략하거나 잘못 인용할 수 있습니다.
 
 ### 향후 개선 방향
 
 - **자동 크롤링 스케줄러**: GitHub Actions 등으로 주기적으로 공지사항을 수집하도록 자동화합니다.
 - **더 많은 데이터 소스**: 학생회, 장학 공지, 도서관 등 추가 정보를 확장합니다.
-- **웹/모바일 인터페이스**: CLI뿐 아니라 Streamlit, 웹 API 등 다양한 진입점을 제공합니다.
 - **평가 및 추적**: LangSmith 등으로 LLM 호출과 검색 품질을 모니터링합니다.
+- **본문 전처리 강화**: 학교 메인 공지의 상단 메뉴/네비게이션 텍스트를 제거하는 전처리 로직을 개선합니다.
