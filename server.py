@@ -267,21 +267,30 @@ def search_notices(query: str) -> str:
 
     recent_keywords = ["최근", "최신"]
     if any(keyword in query for keyword in recent_keywords):
-        # "최근/최신"은 해당 소스에서 날짜 기준 상위 문서만 가져와 정렬한다.
+        # "최근/최신"은 해당 소스의 모든 문서를 가져와 날짜 기준 정렬한다.
         if _vectorstore is None:
             build_retriever()
         vectorstore = _vectorstore
         all_recent_docs: list[Document] = []
         recent_seen_urls = set()
         for src in target_sources:
-            filter_dict = {"source": src}
-            # 상위 50개만 가져와 중복 제거 후 날짜 기준 정렬
-            src_docs = vectorstore.similarity_search("", k=50, filter=filter_dict)
-            for doc in src_docs:
-                url = doc.metadata.get("url")
+            # Chroma collection에서 필터 조건에 맞는 모든 문서를 직접 가져온다.
+            # similarity_search("", k=...)는 빈 쿼리에서 임의의 순서로 일부만 반환할 수 있으므로,
+            # 날짜 기준 최신 문서를 놓치지 않도록 전체 문서를 조회한다.
+            raw_results = vectorstore._collection.get(where={"source": src})
+            ids = raw_results.get("ids", [])
+            documents = raw_results.get("documents", [])
+            metadatas = raw_results.get("metadatas", [])
+            for doc_id, content, meta in zip(ids, documents, metadatas):
+                if not content:
+                    continue
+                meta = meta or {}
+                url = meta.get("url")
                 if url and url not in recent_seen_urls:
                     recent_seen_urls.add(url)
-                    all_recent_docs.append(doc)
+                    all_recent_docs.append(
+                        Document(page_content=content, metadata=meta, id=doc_id)
+                    )
         docs = sorted(all_recent_docs, key=_sort_key, reverse=True)[:5]
     else:
         docs = docs[:10]
