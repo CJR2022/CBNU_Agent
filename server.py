@@ -267,7 +267,19 @@ def search_notices(query: str) -> str:
 
     recent_keywords = ["최근", "최신"]
     if any(keyword in query for keyword in recent_keywords):
-        docs = sorted(docs, key=_sort_key, reverse=True)[:5]
+        # "최근/최신"은 벡터 유사도보다 날짜 기준 전체 문서를 가져와 정확히 정렬한다.
+        vectorstore = _get_vectorstore()
+        all_recent_docs: list[Document] = []
+        recent_seen_urls = set()
+        for src in target_sources:
+            filter_dict = {"source": src}
+            src_docs = vectorstore.similarity_search("", k=1000, filter=filter_dict)
+            for doc in src_docs:
+                url = doc.metadata.get("url")
+                if url and url not in recent_seen_urls:
+                    recent_seen_urls.add(url)
+                    all_recent_docs.append(doc)
+        docs = sorted(all_recent_docs, key=_sort_key, reverse=True)[:5]
     else:
         docs = docs[:10]
 
