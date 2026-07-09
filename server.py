@@ -14,7 +14,7 @@ LangGraph 기반 에이전트를 구성하며, middleware 노드, 도구 노드,
 import logging
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -70,6 +70,21 @@ _DORM_TYPE_MAP = {
     "양진재": "3",
 }
 
+_SOURCE_KEYWORDS = {
+    "dorm": ["기숙사", "생활관"],
+    "ece": ["전자정보"],
+    "sw": ["소프트웨어", "컴공", "컴퓨터"],
+    "main": ["학교", "학사", "본교"],
+}
+
+
+def _detect_source(query: str) -> str | None:
+    """query에서 공지 출처 키워드를 감지하면 해당 source 이름을 반환한다."""
+    for source, keywords in _SOURCE_KEYWORDS.items():
+        if any(keyword in query for keyword in keywords):
+            return source
+    return None
+
 
 @tool
 def get_dorm_menu(dorm_name: str = "개성재") -> str:
@@ -89,21 +104,30 @@ def get_dorm_menu(dorm_name: str = "개성재") -> str:
     if table is None:
         return f"{dorm_name} 식단 정보를 찾을 수 없습니다."
 
-    today = date.today()
+    rows = table.find_all("tr")
+    if not rows:
+        return f"[{dorm_name}] 오늘의 식단 정보를 찾을 수 없습니다."
+
+    today = datetime.now(timezone(timedelta(hours=9))).date()
     today_patterns = [
+        today.isoformat(),
         f"{today.month}월 {today.day}일",
         f"{today.month:02d}.{today.day:02d}",
         f"{today.month}/{today.day}",
         f"{today.month}.{today.day}",
     ]
 
-    rows = table.find_all("tr")
     for row in rows:
         row_text = row.get_text(separator=" ", strip=True)
         if any(pattern in row_text for pattern in today_patterns):
             return f"[{dorm_name} 오늘의 식단]\n{row_text}"
 
-    # 오늘 날짜를 찾지 못하면 안내 메시지를 반환한다.
+    # 오늘 날짜를 찾지 못하면 첫 번째 데이터 행을 반환한다.
+    data_rows = rows[1:] if len(rows) > 1 else rows
+    first_text = data_rows[0].get_text(separator=" ", strip=True)
+    if first_text:
+        return f"[{dorm_name} 오늘의 식단]\n{first_text}"
+
     return f"[{dorm_name}] 오늘의 식단 정보를 찾을 수 없습니다. 기숙사 식단 페이지에서 확인해 주세요. ({url})"
 
 
@@ -117,7 +141,12 @@ def search_notices(query: str) -> str:
     Returns:
         검색된 공지사항 내용을 두 줄 개행으로 연결한 문자열.
     """
+    selected_source = _detect_source(query)
+
     docs = retriever.invoke(query)
+    if selected_source:
+        docs = [doc for doc in docs if doc.metadata.get("source") == selected_source]
+
     if not docs:
         return "관련 공지를 찾을 수 없습니다."
 
@@ -135,6 +164,10 @@ def search_notices(query: str) -> str:
         if _latest_docs_cache is None:
             _latest_docs_cache = _load_latest_docs()
         latest_docs = _latest_docs_cache
+        if selected_source:
+            latest_docs = [
+                doc for doc in latest_docs if doc.metadata.get("source") == selected_source
+            ]
 
         seen_urls = {doc.metadata.get("url") for doc in docs}
         for doc in sorted(latest_docs, key=_sort_key, reverse=True)[:10]:
@@ -145,6 +178,11 @@ def search_notices(query: str) -> str:
         docs = sorted(docs, key=_sort_key, reverse=True)[:5]
 
     return "\n\n".join(doc.page_content for doc in docs)
+
+
+def _source_name_from_path(path: str) -> str:
+    """공지 파일 경로에서 소스 이름(main/ece/sw/dorm)을 추출한다."""
+    return path.replace("\\", "/").split("/")[-1].split("_")[0]
 
 
 def _split_into_notices(page_content: str) -> list[str]:
@@ -197,8 +235,10 @@ def build_retriever():
 
     split_docs = []
     for raw_doc in raw_documents:
+        source_name = _source_name_from_path(raw_doc.metadata.get("source", ""))
         for notice_text in _split_into_notices(raw_doc.page_content):
             meta = _extract_notice_metadata(notice_text)
+            meta["source"] = source_name
             header = (
                 f"[출처]\n"
                 f"제목: {meta['title']}\n"
@@ -206,7 +246,7 @@ def build_retriever():
                 f"URL: {meta['url']}\n\n"
             )
             notice_doc = Document(
-                page_content=notice_text, metadata={"title": meta["title"], "date": meta["date"], "url": meta["url"]}
+                page_content=notice_text, metadata=meta
             )
             for chunk in splitter.split_documents([notice_doc]):
                 chunk.page_content = header + chunk.page_content
@@ -259,8 +299,10 @@ def _load_latest_docs() -> list[Document]:
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
     latest_docs = []
     for raw_doc in raw_documents:
+        source_name = _source_name_from_path(raw_doc.metadata.get("source", ""))
         for notice_text in _split_into_notices(raw_doc.page_content):
             meta = _extract_notice_metadata(notice_text)
+            meta["source"] = source_name
             header = (
                 f"[출처]\n"
                 f"제목: {meta['title']}\n"
@@ -269,7 +311,7 @@ def _load_latest_docs() -> list[Document]:
             )
             notice_doc = Document(
                 page_content=notice_text,
-                metadata={"title": meta["title"], "date": meta["date"], "url": meta["url"]},
+                metadata=meta,
             )
             for chunk in splitter.split_documents([notice_doc]):
                 chunk.page_content = header + chunk.page_content
@@ -296,7 +338,9 @@ understand_prompt = ChatPromptTemplate.from_messages(
             "system",
             "당신은 충북대학교 정보 안내 챗봇입니다. 기숙사 식단 질문이면 get_dorm_menu 도구를, "
             "공지사항 관련 질문이면 search_notices 도구를, 일반 대화면 바로 답변하세요. "
-            "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요.",
+            "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요. "
+            "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어/컴공/컴퓨터, 학교/학사/본교)를 언급한 경우, "
+            "search_notices의 query 인자에 해당 출처 키워드를 반드시 포함하세요.",
         ),
         MessagesPlaceholder(variable_name="messages"),
     ]
@@ -307,6 +351,24 @@ def understand_node(state: AgentState) -> dict:
     """사용자 질문을 이해하고 적절한 도구 호출 또는 답변을 생성한다."""
     chain = understand_prompt | llm_with_tools
     response = chain.invoke({"messages": state["messages"]})
+
+    # 공지 출처 키워드가 빠지지 않도록 search_notices query를 보정한다.
+    if isinstance(response, AIMessage) and response.tool_calls:
+        last_human = None
+        for msg in reversed(state["messages"]):
+            if isinstance(msg, HumanMessage):
+                last_human = msg.content
+                break
+        if last_human:
+            source = _detect_source(last_human)
+            if source:
+                keyword = _SOURCE_KEYWORDS[source][0]
+                for tool_call in response.tool_calls:
+                    if tool_call.get("name") == "search_notices":
+                        query = tool_call.get("args", {}).get("query", "")
+                        if keyword not in query:
+                            tool_call["args"]["query"] = f"{query} {keyword}".strip()
+
     return {"messages": [response]}
 
 
