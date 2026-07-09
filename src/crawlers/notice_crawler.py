@@ -172,13 +172,23 @@ def _extract_title(soup, detail_url: str, fallback_title: str) -> str:
                 if text and text not in _EXCLUDED_TITLES:
                     return text
 
-    # 3. 전자정볼대학/소프트웨어학부: <title> 태그가 "사이트명 - 제목" 형태
-    if soup.title:
-        title_text = clean_text(soup.title.get_text())
-        if " - " in title_text:
-            text = title_text.split(" - ")[-1].strip()
-            if text and text not in _EXCLUDED_TITLES:
-                return text
+    # 3. 전자정보대학/소프트웨어학부:
+    #    - 본문 상단 .rd_hd h1.np_18px에 실제 제목이 들어 있음
+    #    - <title> 태그가 "사이트명 - 제목" 형태
+    if "ece.cbnu.ac.kr" in detail_url or "software.cbnu.ac.kr" in detail_url:
+        rd_hd = soup.find("div", class_="rd_hd")
+        if rd_hd:
+            h1 = rd_hd.find("h1", class_="np_18px")
+            if h1:
+                text = clean_text(h1.get_text())
+                if text and text not in _EXCLUDED_TITLES:
+                    return text
+        if soup.title:
+            title_text = clean_text(soup.title.get_text())
+            if " - " in title_text:
+                text = title_text.split(" - ")[-1].strip()
+                if text and text not in _EXCLUDED_TITLES:
+                    return text
 
     # 4. 범용 폴백: h1/h2/h3/h4 중 의미 있는 텍스트
     for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
