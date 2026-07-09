@@ -2,7 +2,7 @@
 
 수집 대상:
 - 충북대학교 학사/장학 공지
-- 전자정볼대학 공지
+- 전자정보대학 공지
 - 소프트웨어학부 학부공지
 - 기숙사 공지
 """
@@ -278,12 +278,17 @@ def _extract_attachments(soup, detail_url: str) -> list[str]:
             continue
 
         is_static = any(href.lower().endswith(ext) for ext in static_exts)
-        is_dynamic = "download" in href.lower() and (
+        is_school_dynamic = "download" in href.lower() and (
             "atchmnflNo" in href or "fileNo" in href
         )
+        is_dorm_dynamic = "download" in href.lower() and (
+            "fno" in href.lower() or "bid" in href.lower() or "bbs.php" in href.lower()
+        )
 
-        if is_static or is_dynamic:
-            label = clean_text(a.get_text(strip=True)) or "첨부파일"
+        label = clean_text(a.get_text(strip=True)) or "첨부파일"
+        is_pdf_label = ".pdf" in label.lower()
+
+        if is_static or is_school_dynamic or (is_dorm_dynamic and is_pdf_label):
             item = f"{label}: {href}"
             if item not in seen:
                 seen.add(item)
@@ -305,8 +310,13 @@ def extract_notice_detail(detail_url: str, fallback_title: str = "") -> dict:
     for att in attachments:
         url = att.split(": ", 1)[-1] if ": " in att else att
         is_static_pdf = url.lower().endswith(".pdf")
-        is_dynamic_pdf = "download" in url.lower() and ("atchmnflNo" in url or "fileNo" in url)
-        if not (is_static_pdf or is_dynamic_pdf):
+        is_school_dynamic_pdf = "download" in url.lower() and (
+            "atchmnflNo" in url or "fileNo" in url
+        )
+        is_dorm_dynamic_pdf = "download" in url.lower() and (
+            "fno" in url.lower() or "bid" in url.lower() or "bbs.php" in url.lower()
+        )
+        if not (is_static_pdf or is_school_dynamic_pdf or is_dorm_dynamic_pdf):
             continue
 
         extracted = extract_pdf_text(url)

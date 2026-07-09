@@ -6,7 +6,7 @@ LangGraph 기반 에이전트를 구성하며, middleware 노드, 도구 노드,
 주요 구성 요소:
 - LangGraph `StateGraph`: middleware → understand → tool/generate 워크플로우
 - `middleware_node`: 입력 검증 및 로깅
-- `get_dorm_menu`, `search_notices`: 기숙사 식단 및 공지사항 검색 도구
+- `search_notices`: 공지사항 및 기숙사 식단 검색 도구
 - `run_cli()`: 터미널 대화형 CLI
 - `run_agent()`: HTML UI 및 API 서버에서 호출하는 순수 함수형 진입점
 """
@@ -50,8 +50,8 @@ logger = logging.getLogger(__name__)
 class FinalAnswer(BaseModel):
     """최종 답변을 구조화하는 Pydantic OutputParser 모델."""
 
-    answer: str = Field(description="사용자 질문에 대한 최종 답변. 검색된 정볼만 사용하고, 정보가 없으면 '해당 정보는 확인할 수 없습니다'라고 답변하세요.")
-    sources: list[str] = Field(description="참고한 공지 URL 목록")
+    answer: str = Field(description="사용자 질문에 대한 최종 답변. 검색된 정보만 사용하고, 정보가 없으면 '해당 정보는 확인할 수 없습니다'라고 답변하세요.")
+    sources: list[str] = Field(description="참고한 공지/식단 URL 목록")
     confidence: Literal["high", "medium", "low"] = Field(description="답변 확신도: high, medium, low 중 하나. 근거가 충분하면 high, 부족하면 low")
 
 
@@ -64,120 +64,172 @@ def fetch_html(url: str) -> BeautifulSoup:
     return BeautifulSoup(response.text, "html.parser")
 
 
-_DORM_TYPE_MAP = {
-    "개성재": "1",
-    "양성재": "2",
-    "양진재": "3",
-}
-
 _SOURCE_KEYWORDS = {
     "dorm": ["기숙사", "생활관"],
     "ece": ["전자정보"],
-    "sw": ["소프트웨어", "컴공", "컴퓨터"],
+    "sw": ["소프트웨어", "컴공"],
     "main": ["학교", "학사", "본교"],
 }
 
+_MEAL_KEYWORDS = ["메뉴", "식단", "아침", "점심", "저녁", "밥"]
 
-def _detect_source(query: str) -> str | None:
-    """query에서 공지 출처 키워드를 감지하면 해당 source 이름을 반환한다."""
+
+def _is_meal_query(query: str) -> bool:
+    """query에서 식단/메뉴 관련 키워드를 감지한다."""
+    return any(keyword in query for keyword in _MEAL_KEYWORDS)
+
+
+def _detect_sources(query: str, include_menu: bool = False) -> list[str]:
+    """query에서 공지 출처 키워드를 감지하면 source 이름 목록을 반환한다."""
+    sources = set()
     for source, keywords in _SOURCE_KEYWORDS.items():
         if any(keyword in query for keyword in keywords):
-            return source
-    return None
+            sources.add(source)
+    if include_menu:
+        sources.add("dorm_menu")
+    return sorted(sources)
 
 
-@tool
-def get_dorm_menu(dorm_name: str = "개성재") -> str:
-    """충북대학교 기숙사 식단을 조회한다.
+def _source_injection_keyword(source: str) -> str:
+    """source 이름을 search_notices query에 주입할 키워드로 변환한다."""
+    if source == "dorm_menu":
+        return "기숙사"
+    return _SOURCE_KEYWORDS[source][0]
 
-    Args:
-        dorm_name: 기숙사 이름 (개성재, 양성재, 양진재).
 
-    Returns:
-        오늘 날짜의 식단을 문자열로 반환한다.
+# 단순 질문/어미는 확장 시 제거하여 핵심 키워드만 남긴다.
+_QUESTION_STOPWORDS = {
+    "언제", "어디", "무엇", "뭐", "있어", "있나요", "있습니까",
+    "알려줘", "알려주세요", "해줘", "해주세요", "말해줘", "가르쳐줘",
+    "줘", "해", "돼", "되나요", "인가요",
+}
+
+
+def _expand_query(query: str, kst: datetime | None = None) -> list[str]:
+    """짧고 구체적인 질문에 대해 검색 변형을 생성한다.
+
+    예: "기숙사 생활관비 납부 언제까지야?" ->
+        ["기숙사 생활관비 납부", "생활관비 납부", "기숙사 생활관비 납부 기간", ...]
     """
-    type_code = _DORM_TYPE_MAP.get(dorm_name, "1")
-    url = f"https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20041&type={type_code}"
-    soup = fetch_html(url)
+    if kst is None:
+        kst = datetime.now(timezone(timedelta(hours=9)))
 
-    table = soup.select_one("table.m_table_c")
-    if table is None:
-        return f"{dorm_name} 식단 정보를 찾을 수 없습니다."
+    clean = re.sub(r"[?？!！.,]+$", "", query).strip()
+    words = [w for w in clean.split() if w not in _QUESTION_STOPWORDS]
+    if len(words) < 2:
+        variations = [clean]
+    else:
+        variations = [clean]
 
-    rows = table.find_all("tr")
-    if not rows:
-        return f"[{dorm_name}] 오늘의 식단 정보를 찾을 수 없습니다."
+        # 연속된 2~3단어 조합 추가
+        for i in range(len(words) - 1):
+            variations.append(" ".join(words[i : i + 2]))
+        for i in range(len(words) - 2):
+            variations.append(" ".join(words[i : i + 3]))
 
-    today = datetime.now(timezone(timedelta(hours=9))).date()
-    today_patterns = [
-        today.isoformat(),
-        f"{today.month}월 {today.day}일",
-        f"{today.month:02d}.{today.day:02d}",
-        f"{today.month}/{today.day}",
-        f"{today.month}.{today.day}",
-    ]
+        # 날짜/기간 관련 질문에는 명시적 기간 키워드 추가
+        if any(w in query for w in ("언제", "기간", "날짜", "마감", "까지", "입퇴거")):
+            base = " ".join(words)
+            if "기간" not in base:
+                variations.append(f"{base} 기간")
+            if "날짜" not in base:
+                variations.append(f"{base} 날짜")
 
-    for row in rows:
-        row_text = row.get_text(separator=" ", strip=True)
-        if any(pattern in row_text for pattern in today_patterns):
-            return f"[{dorm_name} 오늘의 식단]\n{row_text}"
+    # 오늘/어제/내일/이번 주/다음 주 키워드를 절대 날짜로 변환
+    if "오늘" in query:
+        variations.append(kst.date().isoformat())
+    if "어제" in query:
+        variations.append((kst.date() - timedelta(days=1)).isoformat())
+    if "내일" in query:
+        variations.append((kst.date() + timedelta(days=1)).isoformat())
+    if "이번 주" in query:
+        start = kst.date() - timedelta(days=kst.date().weekday())
+        for i in range(7):
+            variations.append((start + timedelta(days=i)).isoformat())
+    if "다음 주" in query:
+        start = kst.date() + timedelta(days=7 - kst.date().weekday())
+        for i in range(7):
+            variations.append((start + timedelta(days=i)).isoformat())
 
-    # 오늘 날짜를 찾지 못하면 첫 번째 데이터 행을 반환한다.
-    data_rows = rows[1:] if len(rows) > 1 else rows
-    first_text = data_rows[0].get_text(separator=" ", strip=True)
-    if first_text:
-        return f"[{dorm_name} 오늘의 식단]\n{first_text}"
-
-    return f"[{dorm_name}] 오늘의 식단 정보를 찾을 수 없습니다. 기숙사 식단 페이지에서 확인해 주세요. ({url})"
+    # 중복 제거하면서 순서 유지
+    seen = set()
+    result = []
+    for v in variations:
+        if v and v not in seen:
+            seen.add(v)
+            result.append(v)
+    return result
 
 
 @tool
 def search_notices(query: str) -> str:
-    """학교/전자정보/소프트웨어/기숙사 공지사항 벡터 스토어에서 query와 관련된 내용을 검색한다.
+    """학교/전자정보/소프트웨어/기숙사 공지사항과 기숙사 식단을 벡터 스토어에서 검색한다.
 
     Args:
         query: 검색할 키워드나 문장.
 
     Returns:
-        검색된 공지사항 내용을 두 줄 개행으로 연결한 문자열.
+        검색된 공지/식단 내용을 두 줄 개행으로 연결한 문자열.
     """
-    selected_source = _detect_source(query)
+    kst = datetime.now(timezone(timedelta(hours=9)))
+    is_meal = _is_meal_query(query)
+    sources = _detect_sources(query, include_menu=is_meal)
 
-    docs = retriever.invoke(query)
-    if selected_source:
-        docs = [doc for doc in docs if doc.metadata.get("source") == selected_source]
+    queries = _expand_query(query, kst)
+
+    docs: list[Document] = []
+    seen_urls = set()
+
+    if is_meal:
+        # 식단 질문은 dorm_menu를 우선적으로 검색한다.
+        for q in queries:
+            for doc in retriever.invoke(q):
+                if doc.metadata.get("source") == "dorm_menu":
+                    url = doc.metadata.get("url")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        docs.append(doc)
+        # 식단 결과가 없으면 기숙사 공지로 fallback
+        if not docs:
+            for q in queries:
+                for doc in retriever.invoke(q):
+                    if doc.metadata.get("source") == "dorm":
+                        url = doc.metadata.get("url")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            docs.append(doc)
+    else:
+        for q in queries:
+            for doc in retriever.invoke(q):
+                url = doc.metadata.get("url")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    docs.append(doc)
+
+        if sources:
+            docs = [doc for doc in docs if doc.metadata.get("source") in sources]
+
+    recent_keywords = ["최근", "최신"]
+    if any(keyword in query for keyword in recent_keywords):
+        if sources:
+            docs = [doc for doc in docs if doc.metadata.get("source") in sources]
+        docs = sorted(docs, key=_sort_key, reverse=True)[:5]
+    else:
+        docs = docs[:10]
 
     if not docs:
         return "관련 공지를 찾을 수 없습니다."
 
-    recent_keywords = ["최근", "최신", "최근 공지", "최신 공지"]
-    if any(keyword in query for keyword in recent_keywords):
-
-        def _sort_key(doc):
-            date_str = doc.metadata.get("date", "")
-            try:
-                return (True, date.fromisoformat(date_str), date_str)
-            except Exception:
-                return (False, date.min, date_str)
-
-        global _latest_docs_cache
-        if _latest_docs_cache is None:
-            _latest_docs_cache = _load_latest_docs()
-        latest_docs = _latest_docs_cache
-        if selected_source:
-            latest_docs = [
-                doc for doc in latest_docs if doc.metadata.get("source") == selected_source
-            ]
-
-        seen_urls = {doc.metadata.get("url") for doc in docs}
-        for doc in sorted(latest_docs, key=_sort_key, reverse=True)[:10]:
-            if doc.metadata.get("url") not in seen_urls:
-                docs.append(doc)
-                seen_urls.add(doc.metadata.get("url"))
-
-        docs = sorted(docs, key=_sort_key, reverse=True)[:5]
-
     return "\n\n".join(doc.page_content for doc in docs)
+
+
+def _sort_key(doc: Document):
+    """문서를 날짜 기준으로 정렬하기 위한 키 함수."""
+    date_str = doc.metadata.get("date", "")
+    try:
+        return (True, date.fromisoformat(date_str), date_str)
+    except Exception:
+        return (False, date.min, date_str)
 
 
 def _source_name_from_path(path: str) -> str:
@@ -218,39 +270,80 @@ def _extract_notice_metadata(page_content: str) -> dict[str, str]:
     }
 
 
-def build_retriever():
-    """data/raw/notices의 .txt 파일들로 Chroma 벡터스토어를 만들고 retriever를 반환한다.
+def _extract_menu_metadata(page_content: str) -> dict[str, str]:
+    """식단 텍스트의 상단 메타데이터에서 기숙사, 날짜, URL을 추출한다."""
+    dorm_match = re.search(r"기숙사:\s*(.+)", page_content)
+    date_match = re.search(r"날짜:\s*(.+)", page_content)
+    url_match = re.search(r"URL:\s*(.+)", page_content)
 
-    각 공지의 메타데이터(제목, 날짜, URL)를 해당 공지에서 나뉜 모든 chunk 앞에 추가한다.
+    raw_date = date_match.group(1).strip() if date_match else ""
+    parsed_date = raw_date
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
+        try:
+            parsed_date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+            break
+        except Exception:
+            continue
+
+    return {
+        "dorm": dorm_match.group(1).strip() if dorm_match else "기숙사",
+        "date": parsed_date,
+        "url": url_match.group(1).strip() if url_match else "",
+    }
+
+
+def build_retriever():
+    """data/raw/notices와 data/raw/dorm_menu의 .txt 파일들로 Chroma 벡터스토어를 만들고
+    retriever를 반환한다.
+
+    각 문서의 메타데이터를 chunk 앞에 추가해 검색 결과에 출처 정보를 담는다.
     """
-    loader = DirectoryLoader(
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split_docs = []
+
+    # 공지사항
+    notice_loader = DirectoryLoader(
         "data/raw/notices",
         glob="*.txt",
         loader_cls=TextLoader,
         loader_kwargs={"encoding": "utf-8"},
     )
-    raw_documents = loader.load()
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
-
-    split_docs = []
-    for raw_doc in raw_documents:
+    for raw_doc in notice_loader.load():
         source_name = _source_name_from_path(raw_doc.metadata.get("source", ""))
         for notice_text in _split_into_notices(raw_doc.page_content):
             meta = _extract_notice_metadata(notice_text)
             meta["source"] = source_name
             header = (
-                f"[출처]\n"
+                f"[공지사항]\n"
                 f"제목: {meta['title']}\n"
                 f"날짜: {meta['date']}\n"
                 f"URL: {meta['url']}\n\n"
             )
-            notice_doc = Document(
-                page_content=notice_text, metadata=meta
-            )
+            notice_doc = Document(page_content=notice_text, metadata=meta)
             for chunk in splitter.split_documents([notice_doc]):
                 chunk.page_content = header + chunk.page_content
                 split_docs.append(chunk)
+
+    # 기숙사 식단
+    menu_loader = DirectoryLoader(
+        "data/raw/dorm_menu",
+        glob="*/*.txt",
+        loader_cls=TextLoader,
+        loader_kwargs={"encoding": "utf-8"},
+    )
+    for raw_doc in menu_loader.load():
+        meta = _extract_menu_metadata(raw_doc.page_content)
+        meta["source"] = "dorm_menu"
+        header = (
+            f"[기숙사 식단]\n"
+            f"기숙사: {meta['dorm']}\n"
+            f"날짜: {meta['date']}\n"
+            f"URL: {meta['url']}\n\n"
+        )
+        menu_doc = Document(page_content=raw_doc.page_content, metadata=meta)
+        for chunk in splitter.split_documents([menu_doc]):
+            chunk.page_content = header + chunk.page_content
+            split_docs.append(chunk)
 
     vectorstore = Chroma.from_documents(
         documents=split_docs,
@@ -258,7 +351,7 @@ def build_retriever():
         persist_directory="./chroma_db",
     )
 
-    return vectorstore.as_retriever(search_kwargs={"k": 5})
+    return vectorstore.as_retriever(search_kwargs={"k": 100})
 
 
 @lru_cache(maxsize=1)
@@ -279,46 +372,6 @@ class _LazyRetriever:
 retriever = _LazyRetriever()
 
 
-# 최신 공지 조회용 캐시 (프로세스 재시작 전까지 유지)
-_latest_docs_cache: list[Document] | None = None
-
-
-def _load_latest_docs() -> list[Document]:
-    """원본 공지 파일에서 최신 공지 chunk를 로드한다."""
-    try:
-        loader = DirectoryLoader(
-            "data/raw/notices",
-            glob="*.txt",
-            loader_cls=TextLoader,
-            loader_kwargs={"encoding": "utf-8"},
-        )
-        raw_documents = loader.load()
-    except Exception:
-        raw_documents = []
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
-    latest_docs = []
-    for raw_doc in raw_documents:
-        source_name = _source_name_from_path(raw_doc.metadata.get("source", ""))
-        for notice_text in _split_into_notices(raw_doc.page_content):
-            meta = _extract_notice_metadata(notice_text)
-            meta["source"] = source_name
-            header = (
-                f"[출처]\n"
-                f"제목: {meta['title']}\n"
-                f"날짜: {meta['date']}\n"
-                f"URL: {meta['url']}\n\n"
-            )
-            notice_doc = Document(
-                page_content=notice_text,
-                metadata=meta,
-            )
-            for chunk in splitter.split_documents([notice_doc]):
-                chunk.page_content = header + chunk.page_content
-                latest_docs.append(chunk)
-    return latest_docs
-
-
 class AgentState(TypedDict):
     """LangGraph 상태 정의."""
 
@@ -329,15 +382,18 @@ class AgentState(TypedDict):
 
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-llm_with_tools = llm.bind_tools([get_dorm_menu, search_notices])
+llm_with_tools = llm.bind_tools([search_notices])
 
 
 understand_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "당신은 충북대학교 정보 안내 챗봇입니다. 기숙사 식단 질문이면 get_dorm_menu 도구를, "
-            "공지사항 관련 질문이면 search_notices 도구를, 일반 대화면 바로 답변하세요. "
+            "당신은 충북대학교 정보 안내 챗봇입니다.\n"
+            "학교/기숙사/학과 공지사항이나 기숙사 식단에 대한 구체적인 질문은 반드시 search_notices 도구를 사용하세요. "
+            "일반 대화면 바로 답변하세요.\n"
+            "예시: '기숙사 생활관비 납부 언제까지야?', '전자정볼대학 장학 공지 있어?', "
+            "'기숙사 입퇴거 날짜 알려줘', '오늘 양성재 메뉴 뭐야?' → 모두 search_notices를 호출하세요.\n"
             "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요. "
             "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어/컴공/컴퓨터, 학교/학사/본교)를 언급한 경우, "
             "search_notices의 query 인자에 해당 출처 키워드를 반드시 포함하세요.",
@@ -360,9 +416,10 @@ def understand_node(state: AgentState) -> dict:
                 last_human = msg.content
                 break
         if last_human:
-            source = _detect_source(last_human)
-            if source:
-                keyword = _SOURCE_KEYWORDS[source][0]
+            is_meal = _is_meal_query(last_human)
+            sources = _detect_sources(last_human, include_menu=is_meal)
+            if sources:
+                keyword = _source_injection_keyword(sources[0])
                 for tool_call in response.tool_calls:
                     if tool_call.get("name") == "search_notices":
                         query = tool_call.get("args", {}).get("query", "")
@@ -372,7 +429,7 @@ def understand_node(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
-TOOLS_BY_NAME = {tool.name: tool for tool in [get_dorm_menu, search_notices]}
+TOOLS_BY_NAME = {tool.name: tool for tool in [search_notices]}
 
 
 def call_tool_node(state: AgentState) -> dict:
@@ -399,11 +456,13 @@ def generate_node(state: AgentState) -> dict:
                 "system",
                 "당신은 충북대학교 정보 안내 챗봇입니다. "
                 "대화 기록과 검색된 정보를 바탕으로 사용자 질문에 대한 최종 답변을 생성하세요.\n"
-                "검색된 공지나 조회된 식단 정보에 없는 내용은 절대 지어내지 마세요.\n"
+                "검색된 공지나 식단 정보 중에서 사용자 질문과 직접 관련된 내용을 찾아 답변하세요. "
+                "관련 정보가 명확하지 않더라도, 검색된 결과에서 가장 근접한 내용을 인용하여 답변을 구성하세요.\n"
+                "검색된 공지나 식단 정보에 없는 내용은 절대 지어내지 마세요.\n"
                 "정보가 부족하면 '해당 정보는 확인할 수 없습니다' 또는 '학교 홈페이지를 직접 확인해 주세요'라고 답변하세요.\n"
-                "답변에 참고한 공지의 제목, 날짜, URL을 포함하세요. "
-                "검색 결과 중 날짜가 가장 최근인 공지를 우선적으로 참고하세요. "
-                "sources 필드에는 참고한 공지의 URL을 채워넣으세요.\n"
+                "답변에 참고한 공지/식단의 제목(또는 기숙사), 날짜, URL을 포함하세요. "
+                "검색 결과 중 날짜가 가장 최근인 문서를 우선적으로 참고하세요. "
+                "sources 필드에는 참고한 문서의 URL을 채워넣으세요.\n"
                 "{format_instructions}",
             ),
             MessagesPlaceholder(variable_name="messages"),
