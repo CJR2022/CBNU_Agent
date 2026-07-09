@@ -79,6 +79,30 @@ def _is_meal_query(query: str) -> bool:
     return any(keyword in query for keyword in _MEAL_KEYWORDS)
 
 
+_DORM_NAMES = ["양성재", "양진재", "양현재", "개성재"]
+
+
+def _detect_dorm(query: str) -> str | None:
+    """query에서 기숙사 이름을 감지하면 반환한다."""
+    for name in _DORM_NAMES:
+        if name in query:
+            return name
+    return None
+
+
+def _extract_target_dates(query: str, kst: datetime) -> list[str]:
+    """query에서 '오늘/어제/내일'과 YYYY-MM-DD 형식 날짜를 추출한다."""
+    dates = []
+    if "오늘" in query:
+        dates.append(kst.date().isoformat())
+    if "어제" in query:
+        dates.append((kst.date() - timedelta(days=1)).isoformat())
+    if "내일" in query:
+        dates.append((kst.date() + timedelta(days=1)).isoformat())
+    dates.extend(re.findall(r"\d{4}-\d{2}-\d{2}", query))
+    return dates
+
+
 def _detect_sources(query: str, include_menu: bool = False) -> list[str]:
     """query에서 공지 출처 키워드를 감지하면 source 이름 목록을 반환한다."""
     sources = set()
@@ -180,6 +204,28 @@ def search_notices(query: str) -> str:
     docs: list[Document] = []
     seen_urls = set()
 
+    # 식단 질문에서 날짜(오늘/어제/내일/YYYY-MM-DD)가 명시되면 메타데이터 필터로 정확히 검색
+    if is_meal:
+        target_dates = _extract_target_dates(query, kst)
+        target_dorm = _detect_dorm(query)
+        if target_dates:
+            vectorstore = _get_vectorstore()
+            for date_str in target_dates:
+                filter_dict: dict = {
+                    "$and": [{"source": "dorm_menu"}, {"date": date_str}]
+                }
+                if target_dorm:
+                    filter_dict["$and"].append({"dorm": target_dorm})
+                date_docs = vectorstore.similarity_search("", k=100, filter=filter_dict)
+                for doc in date_docs:
+                    url = doc.metadata.get("url")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        docs.append(doc)
+            if docs:
+                docs = docs[:10]
+                return "\n\n".join(doc.page_content for doc in docs)
+
     if is_meal:
         # 식단 질문은 dorm_menu를 우선적으로 검색한다.
         target_sources = {"dorm_menu"}
@@ -192,9 +238,6 @@ def search_notices(query: str) -> str:
         # 출처가 명시되지 않으면 전체를 검색한다.
         target_sources = {"main", "ece", "sw", "dorm"}
         fallback_sources = set()
-
-    docs: list[Document] = []
-    seen_urls = set()
 
     def _collect(targets: set[str]):
         collected: list[Document] = []
@@ -303,12 +346,16 @@ def _extract_menu_metadata(page_content: str) -> dict[str, str]:
     }
 
 
+_vectorstore = None
+
+
 def build_retriever():
     """data/raw/notices와 data/raw/dorm_menu의 .txt 파일들로 Chroma 벡터스토어를 만들고
     retriever를 반환한다.
 
     각 문서의 메타데이터를 chunk 앞에 추가해 검색 결과에 출처 정보를 담는다.
     """
+    global _vectorstore
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     split_docs = []
 
@@ -356,13 +403,21 @@ def build_retriever():
             chunk.page_content = header + chunk.page_content
             split_docs.append(chunk)
 
-    vectorstore = Chroma.from_documents(
+    _vectorstore = Chroma.from_documents(
         documents=split_docs,
         embedding=OpenAIEmbeddings(),
         persist_directory="./chroma_db",
     )
 
-    return vectorstore.as_retriever(search_kwargs={"k": 100})
+    return _vectorstore.as_retriever(search_kwargs={"k": 100})
+
+
+def _get_vectorstore():
+    """벡터스토어 전역 참조를 반환한다. 필요하면 지연 초기화한다."""
+    global _vectorstore
+    if _vectorstore is None:
+        get_retriever()
+    return _vectorstore
 
 
 @lru_cache(maxsize=1)
