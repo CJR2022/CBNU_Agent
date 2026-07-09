@@ -588,23 +588,23 @@ uvicorn server:app --reload
 
 ## 14. 산출물 체크리스트
 
-- [ ] GitHub Public Repository 생성
-- [ ] `requirements.txt` 포함
-- [ ] `.env`로 API Key 분리 관리
-- [ ] 주기적 크롤링 스크립트 (`src/crawlers/run_all.py`)
-- [ ] 벡터스토어 인덱싱 로직 (`server.py` 내 포함)
+- [x] GitHub Public Repository 생성
+- [x] `requirements.txt` 포함
+- [x] `.env`로 API Key 분리 관리
+- [x] 주기적 크롤링 스크립트 (`src/crawlers/run_all.py`)
+- [x] 벡터스토어 인덱싱 로직 (`server.py` 내 포함)
 - [x] Tool 구현 (`search_notices`로 공지 + 식단 통합 검색)
-- [ ] `server.py`에 백엔드 핵심 로직 집중
-- [ ] 4개 공지 소스 수집 (학교, 전자정보, 소프트웨어, 기숙사)
-- [ ] RAG 파이프라인 1개 이상 포함
-- [ ] 대화 메모리(`MemorySaver`) 적용
-- [ ] LangGraph `StateGraph` + `conditional edge` 적용
-- [ ] Middleware 1개 이상 적용 (로깅/입력검증)
-- [ ] OutputParser(Pydantic) 적용
+- [x] `server.py`에 백엔드 핵심 로직 집중
+- [x] 4개 공지 소스 수집 (학교, 전자정보, 소프트웨어, 기숙사)
+- [x] RAG 파이프라인 1개 이상 포함
+- [x] 대화 메모리(`MemorySaver`) 적용
+- [x] LangGraph `StateGraph` + `conditional edge` 적용
+- [x] Middleware 1개 이상 적용 (로깅/입력검증)
+- [x] OutputParser(Pydantic) 적용
 - [x] Workflow 다이어그램 포함 (README에 Mermaid로 병합)
-- [ ] README 작성 (서비스 소개, 아키텍처, 설치/실행, 기술 설명, 한계/개선)
-- [ ] Git 커밋 이력이 Phase별로 정리되어 있음
-- [ ] 최종 코드가 `main` 브랜치에 머지됨
+- [x] README 작성 (서비스 소개, 아키텍처, 설치/실행, 기술 설명, 한계/개선)
+- [x] Git 커밋 이력이 Phase별로 정리되어 있음
+- [x] 최종 코드가 `main` 브랜치에 머지됨
 
 ---
 

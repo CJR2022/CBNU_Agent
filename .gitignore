@@ -14,9 +14,4 @@ __pycache__/
 *.egg-info/
 .vscode/
 .idea/
-PLAN.md
-STATUS.md
 .superpowers/
-TODO.md
-tests/
-pytest.ini
