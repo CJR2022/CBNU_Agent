@@ -182,37 +182,48 @@ def search_notices(query: str) -> str:
 
     if is_meal:
         # 식단 질문은 dorm_menu를 우선적으로 검색한다.
-        for q in queries:
-            for doc in retriever.invoke(q):
-                if doc.metadata.get("source") == "dorm_menu":
-                    url = doc.metadata.get("url")
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
-                        docs.append(doc)
-        # 식단 결과가 없으면 기숙사 공지로 fallback
-        if not docs:
-            for q in queries:
-                for doc in retriever.invoke(q):
-                    if doc.metadata.get("source") == "dorm":
-                        url = doc.metadata.get("url")
-                        if url and url not in seen_urls:
-                            seen_urls.add(url)
-                            docs.append(doc)
+        target_sources = {"dorm_menu"}
+        fallback_sources = {"dorm"}
+    elif sources:
+        # 사용자가 출처(기숙사/전자정보/소프트웨어/학교)를 명시하면 해당 소스만 검색한다.
+        target_sources = set(sources)
+        fallback_sources = set()
     else:
+        # 출처가 명시되지 않으면 전체를 검색한다.
+        target_sources = {"main", "ece", "sw", "dorm"}
+        fallback_sources = set()
+
+    docs: list[Document] = []
+    seen_urls = set()
+
+    def _collect(targets: set[str]):
+        collected: list[Document] = []
+        local_seen = set()
         for q in queries:
             for doc in retriever.invoke(q):
+                if doc.metadata.get("source") not in targets:
+                    continue
                 url = doc.metadata.get("url")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    docs.append(doc)
+                if url and url not in local_seen and url not in seen_urls:
+                    local_seen.add(url)
+                    collected.append(doc)
+        return collected
 
-        if sources:
-            docs = [doc for doc in docs if doc.metadata.get("source") in sources]
+    # 1순위: 사용자가 원한 출처로만 검색
+    docs = _collect(target_sources)
+    seen_urls = {doc.metadata.get("url") for doc in docs if doc.metadata.get("url")}
+
+    # 2순위: 식단/출처 fallback
+    if not docs and fallback_sources:
+        docs = _collect(fallback_sources)
+        seen_urls = {doc.metadata.get("url") for doc in docs if doc.metadata.get("url")}
+
+    # 3순위: 출처가 명시되지 않은 경우 전체 검색
+    if not docs and not sources and not is_meal:
+        docs = _collect({"main", "ece", "sw", "dorm"})
 
     recent_keywords = ["최근", "최신"]
     if any(keyword in query for keyword in recent_keywords):
-        if sources:
-            docs = [doc for doc in docs if doc.metadata.get("source") in sources]
         docs = sorted(docs, key=_sort_key, reverse=True)[:5]
     else:
         docs = docs[:10]
