@@ -511,23 +511,13 @@ def call_tool_node(state: AgentState) -> dict:
     return {"messages": tool_messages}
 
 
-def _extract_urls_from_messages(messages: list) -> list[str]:
-    """ToolMessage나 HumanMessage에서 참고 URL 목록을 추출한다."""
+def _extract_urls_from_text(text: str) -> list[str]:
+    """텍스트에 실제로 등장하는 URL 목록을 추출한다."""
     urls = []
-    url_pattern = re.compile(r"https?://[^\s\]\)>\"]+")
-    for msg in messages:
-        if isinstance(msg, (AIMessage, ToolMessage, HumanMessage)):
-            content = str(msg.content)
-            # search_notices 결과에서 "URL: ..." 형태를 우선 추출
-            for line in content.splitlines():
-                if line.strip().startswith("URL:"):
-                    url = line.split("URL:", 1)[1].strip()
-                    if url and url not in urls:
-                        urls.append(url)
-            # 일반 URL도 추가
-            for match in url_pattern.findall(content):
-                if match not in urls:
-                    urls.append(match)
+    url_pattern = re.compile(r"https?:\/\/[^\s\]\)>\"]+")
+    for match in url_pattern.findall(text):
+        if match not in urls:
+            urls.append(match)
     return urls
 
 
@@ -573,9 +563,8 @@ def generate_node(state: AgentState) -> dict:
     except Exception:
         parsed = FinalAnswer(answer=content, sources=[], confidence="low")
 
-    # LLM이 sources를 비워둔 경우, 검색 결과에서 URL을 복원한다.
-    if not parsed.sources:
-        parsed.sources = _extract_urls_from_messages(messages)
+    # 최종 답변에 실제로 등장하는 URL만 sources로 유지한다.
+    parsed.sources = _extract_urls_from_text(parsed.answer)
 
     parsed.confidence = _resolve_confidence(parsed.answer, parsed.sources)
 
