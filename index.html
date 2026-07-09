@@ -6,16 +6,18 @@
     <title>CBNU Agent</title>
     <style>
         :root {
-            --bg: #f5f6f8;
+            --cbnu-red: #b71c1c;
+            --cbnu-red-dark: #8e1515;
+            --cbnu-red-light: #fbe9e9;
+            --bg: #f8f9fa;
             --surface: #ffffff;
-            --primary: #1a73e8;
-            --primary-dark: #1557b0;
-            --text: #202124;
+            --text: #1f1f1f;
             --text-secondary: #5f6368;
-            --border: #dadce0;
-            --bubble-user: #e8f0fe;
-            --bubble-bot: #ffffff;
-            --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --border: #e8eaed;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.12);
+            --radius: 1rem;
+            --radius-sm: 0.625rem;
         }
 
         * {
@@ -33,25 +35,40 @@
         }
 
         header {
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-            padding: 1rem 1.25rem;
+            background: linear-gradient(135deg, var(--cbnu-red) 0%, var(--cbnu-red-dark) 100%);
+            color: white;
+            padding: 0.875rem 1.25rem;
             box-shadow: var(--shadow);
             display: flex;
             align-items: center;
             gap: 0.75rem;
         }
 
+        .logo {
+            width: 2.25rem;
+            height: 2.25rem;
+            background: white;
+            color: var(--cbnu-red);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
         header h1 {
             margin: 0;
             font-size: 1.125rem;
-            font-weight: 600;
+            font-weight: 700;
+            letter-spacing: -0.02em;
         }
 
         header p {
-            margin: 0;
+            margin: 0.125rem 0 0;
             font-size: 0.75rem;
-            color: var(--text-secondary);
+            opacity: 0.92;
         }
 
         main {
@@ -60,48 +77,166 @@
             padding: 1rem;
             display: flex;
             flex-direction: column;
-            gap: 0.75rem;
+            gap: 0.875rem;
+        }
+
+        .welcome-card {
+            background: var(--surface);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            box-shadow: var(--shadow);
+            border-left: 4px solid var(--cbnu-red);
+            animation: slideUp 0.4s ease-out;
+        }
+
+        .welcome-card h2 {
+            margin: 0 0 0.5rem;
+            font-size: 1.1rem;
+            color: var(--cbnu-red);
+        }
+
+        .welcome-card p {
+            margin: 0;
+            font-size: 0.9375rem;
+            line-height: 1.55;
+            color: var(--text-secondary);
+        }
+
+        .chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.875rem;
+        }
+
+        .chip {
+            background: var(--cbnu-red-light);
+            color: var(--cbnu-red);
+            border: 1px solid rgba(183, 28, 28, 0.15);
+            border-radius: 9999px;
+            padding: 0.5rem 0.875rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .chip:hover {
+            background: var(--cbnu-red);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(183, 28, 28, 0.25);
         }
 
         .message {
             max-width: 85%;
-            padding: 0.875rem 1rem;
-            border-radius: 1rem;
-            line-height: 1.5;
+            padding: 0.875rem 1.125rem;
+            border-radius: var(--radius);
+            line-height: 1.6;
             white-space: pre-wrap;
             box-shadow: var(--shadow);
+            animation: slideUp 0.3s ease-out;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .message:hover {
+            box-shadow: var(--shadow-hover);
         }
 
         .message.user {
             align-self: flex-end;
-            background: var(--bubble-user);
+            background: var(--cbnu-red);
+            color: white;
             border-bottom-right-radius: 0.25rem;
         }
 
         .message.bot {
             align-self: flex-start;
-            background: var(--bubble-bot);
+            background: var(--surface);
             border-bottom-left-radius: 0.25rem;
         }
 
+        .message.bot a {
+            color: var(--cbnu-red);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .message.bot a:hover {
+            text-decoration: underline;
+        }
+
         .sources {
-            margin-top: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .sources summary {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .sources summary::before {
+            content: "▸";
+            transition: transform 0.2s ease;
+        }
+
+        .sources[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        .source-cards {
+            display: grid;
+            gap: 0.5rem;
+            margin-top: 0.625rem;
+        }
+
+        .source-card {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.625rem 0.75rem;
+            border-radius: var(--radius-sm);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .source-card:hover {
+            border-color: var(--cbnu-red);
+            background: var(--cbnu-red-light);
+            transform: translateX(2px);
+        }
+
+        .source-card .favicon {
+            width: 1.5rem;
+            height: 1.5rem;
+            border-radius: 50%;
+            background: var(--cbnu-red);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.625rem;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .source-card .url-text {
             font-size: 0.8125rem;
             color: var(--text-secondary);
-        }
-
-        .sources a {
-            color: var(--primary);
             word-break: break-all;
-        }
-
-        .sources ul {
-            margin: 0.25rem 0 0;
-            padding-left: 1.25rem;
-        }
-
-        .sources li {
-            margin-bottom: 0.25rem;
+            line-height: 1.4;
         }
 
         .input-area {
@@ -109,46 +244,72 @@
             border-top: 1px solid var(--border);
             padding: 0.875rem 1rem;
             display: flex;
-            gap: 0.5rem;
+            gap: 0.625rem;
+            box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
         }
 
         .input-area input {
             flex: 1;
-            padding: 0.75rem 1rem;
+            padding: 0.875rem 1.125rem;
             border: 1px solid var(--border);
-            border-radius: 1.5rem;
+            border-radius: 9999px;
             font-size: 1rem;
             outline: none;
+            transition: all 0.2s ease;
+            background: var(--bg);
         }
 
         .input-area input:focus {
-            border-color: var(--primary);
+            border-color: var(--cbnu-red);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(183, 28, 28, 0.1);
         }
 
         .input-area button {
-            padding: 0.75rem 1.25rem;
+            padding: 0.875rem 1.5rem;
             border: none;
-            border-radius: 1.5rem;
-            background: var(--primary);
+            border-radius: 9999px;
+            background: var(--cbnu-red);
             color: white;
             font-size: 1rem;
+            font-weight: 600;
             cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        .input-area button:hover {
-            background: var(--primary-dark);
+        .input-area button:hover:not(:disabled) {
+            background: var(--cbnu-red-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(183, 28, 28, 0.25);
         }
 
         .input-area button:disabled {
-            background: var(--border);
+            background: #d1d5db;
             cursor: not-allowed;
         }
 
         .loading {
             align-self: flex-start;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
             color: var(--text-secondary);
             font-size: 0.875rem;
             padding-left: 0.25rem;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        .loading::before {
+            content: "";
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid var(--border);
+            border-top-color: var(--cbnu-red);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
         }
 
         .sr-only {
@@ -163,15 +324,37 @@
             border: 0;
         }
 
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
         @media (max-width: 640px) {
             .message {
                 max-width: 92%;
+            }
+
+            .input-area button {
+                padding: 0.875rem 1.125rem;
             }
         }
     </style>
 </head>
 <body>
     <header>
+        <div class="logo">CB</div>
         <div>
             <h1>CBNU Agent</h1>
             <p>충북대학교 정보 안내 챗봇</p>
@@ -179,9 +362,16 @@
     </header>
 
     <main id="chat" aria-live="polite" aria-atomic="false">
-        <div class="message bot">안녕하세요! 충북대학교 정보 안내 챗봇 CBNU Agent입니다.
-기숙사 식단, 학사/학과 공지 등에 대해 물어보세요.
-</div>
+        <div class="welcome-card">
+            <h2>안녕하세요! CBNU Agent입니다.</h2>
+            <p>기숙사 식단, 학사/학과 공지 등 충북대 생활 정보를 편하게 물어보세요.</p>
+            <div class="chips" id="chips">
+                <button class="chip" data-query="오늘 양성재 메뉴 뭐야?">오늘 양성재 메뉴</button>
+                <button class="chip" data-query="기숙사 생활관비 납부 언제까지야?">기숙사 생활관비 납부</button>
+                <button class="chip" data-query="소프트웨어학부 최근 공지 알려줘">소프트웨어학부 최근 공지</button>
+                <button class="chip" data-query="기숙사 최근 공지 알려줘">기숙사 최근 공지</button>
+            </div>
+        </div>
     </main>
 
     <form class="input-area" id="chat-form">
@@ -197,14 +387,9 @@
         const sendBtn = document.getElementById('send-btn');
 
         function renderMarkdown(text) {
-            // HTML 이스케이프된 텍스트를 받아 간단한 Markdown을 HTML로 변환
-            // 1. 볼드 **텍스트** → <strong>텍스트</strong>
             let html = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            // 2. [텍스트](URL) → <a href="URL">텍스트</a>
             html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-            // 3. 아직 링크로 변환되지 않은 단독 URL만 클릭 가능한 링크로 변환
-            //    <a ...> 난이나 </a> 태그 난부의 URL은 제외
-            html = html.replace(/(?!<[^>]*)(https?:\/\/[^\s<"]+)(?![^\u003c]*<\/a>)/g, (match) => {
+            html = html.replace(/(?!<[^>]*)(https?:\/\/[^\s<"]+)(?![^<]*<\/a>)/g, (match) => {
                 return `<a href="${match}" target="_blank" rel="noopener noreferrer">${match}</a>`;
             });
             return html;
@@ -219,39 +404,53 @@
                 .replace(/'/g, '&#039;');
         }
 
+        function getDomainFavicon(url) {
+            try {
+                const domain = new URL(url).hostname.replace(/^www\./, '');
+                return domain.split('.')[0].slice(0, 2).toUpperCase();
+            } catch {
+                return 'CB';
+            }
+        }
+
         function appendMessage(text, sender, sources = []) {
             const wrapper = document.createElement('div');
             wrapper.className = `message ${sender}`;
 
             const textDiv = document.createElement('div');
-            // HTML 이스케이프 후 Markdown 변환
             textDiv.innerHTML = renderMarkdown(escapeHtml(text)).replace(/\n/g, '<br>');
             wrapper.appendChild(textDiv);
 
             if (sources && sources.length > 0) {
                 const details = document.createElement('details');
                 details.className = 'sources';
-                details.style.marginTop = '0.5rem';
 
                 const summary = document.createElement('summary');
                 summary.textContent = `출처 (${sources.length}개)`;
-                summary.style.cursor = 'pointer';
-                summary.style.color = 'var(--primary)';
                 details.appendChild(summary);
 
-                const ul = document.createElement('ul');
-                ul.style.marginTop = '0.25rem';
+                const cards = document.createElement('div');
+                cards.className = 'source-cards';
                 sources.forEach(url => {
-                    const li = document.createElement('li');
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.target = '_blank';
-                    a.rel = 'noopener noreferrer';
-                    a.textContent = url;
-                    li.appendChild(a);
-                    ul.appendChild(li);
+                    const card = document.createElement('a');
+                    card.className = 'source-card';
+                    card.href = url;
+                    card.target = '_blank';
+                    card.rel = 'noopener noreferrer';
+
+                    const favicon = document.createElement('div');
+                    favicon.className = 'favicon';
+                    favicon.textContent = getDomainFavicon(url);
+
+                    const urlText = document.createElement('span');
+                    urlText.className = 'url-text';
+                    urlText.textContent = url;
+
+                    card.appendChild(favicon);
+                    card.appendChild(urlText);
+                    cards.appendChild(card);
                 });
-                details.appendChild(ul);
+                details.appendChild(cards);
                 wrapper.appendChild(details);
             }
 
@@ -275,11 +474,8 @@
             }
         }
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const text = input.value.trim();
-            if (!text) return;
-
+        async function sendMessage(text) {
+            if (!text.trim()) return;
             appendMessage(text, 'user');
             input.value = '';
             setLoading(true);
@@ -296,6 +492,20 @@
                 appendMessage('서버와 통신 중 오류가 발생했습니다.', 'bot');
             } finally {
                 setLoading(false);
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await sendMessage(input.value);
+        });
+
+        document.getElementById('chips').addEventListener('click', (e) => {
+            const chip = e.target.closest('.chip');
+            if (chip) {
+                const query = chip.dataset.query;
+                input.value = query;
+                sendMessage(query);
             }
         });
     </script>
