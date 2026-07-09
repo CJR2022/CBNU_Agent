@@ -64,9 +64,14 @@ def extract_pdf_text(url: str) -> str:
 
 
 def extract_notice_links(list_url: str, base_url: str) -> list[dict]:
-    """공지사항 목록 페이지에서 제목과 본문 링크를 추출한다."""
+    """공지사항 목록 페이지에서 제목과 본문 링크를 추출한다.
+
+    상단 고정 공지는 페이지를 넘어가도 반복되므로 제외하고,
+    일반 공지만 수집한다.
+    """
     soup = fetch_html(list_url)
     links = []
+    seen_urls = set()
 
     # 각 사이트의 테이블 선택자 우선순위
     table = (
@@ -78,9 +83,16 @@ def extract_notice_links(list_url: str, base_url: str) -> list[dict]:
     if not table:
         return links
 
+    pinned_classes = {"notice", "p-notice", "brd_notice"}
+
     for row in table.find_all("tr")[1:]:  # 헤더 제외
         cells = row.find_all(["td", "th"])
         if not cells:
+            continue
+
+        # 상단 고정 공지 행은 제외한다.
+        row_classes = set(row.get("class") or [])
+        if row_classes & pinned_classes:
             continue
 
         # 제목이 담긴 셀 찾기
@@ -100,6 +112,11 @@ def extract_notice_links(list_url: str, base_url: str) -> list[dict]:
         # 광고/불필요 링크 필터
         if not title or href.startswith("#") or "javascript" in href.lower():
             continue
+
+        # 중복 URL 제거
+        if href in seen_urls:
+            continue
+        seen_urls.add(href)
 
         links.append({"title": title, "url": href})
 
