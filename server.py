@@ -12,6 +12,7 @@ LangGraph 기반 에이전트를 구성하며, middleware 노드, 도구 노드,
 """
 
 import logging
+import os
 import re
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -209,7 +210,9 @@ def search_notices(query: str) -> str:
         target_dates = _extract_target_dates(query, kst)
         target_dorm = _detect_dorm(query)
         if target_dates:
-            vectorstore = _get_vectorstore()
+            if _vectorstore is None:
+                build_retriever()
+            vectorstore = _vectorstore
             for date_str in target_dates:
                 filter_dict: dict = {
                     "$and": [{"source": "dorm_menu"}, {"date": date_str}]
@@ -268,7 +271,9 @@ def search_notices(query: str) -> str:
     recent_keywords = ["최근", "최신"]
     if any(keyword in query for keyword in recent_keywords):
         # "최근/최신"은 벡터 유사도보다 날짜 기준 전체 문서를 가져와 정확히 정렬한다.
-        vectorstore = _get_vectorstore()
+        if _vectorstore is None:
+            build_retriever()
+        vectorstore = _vectorstore
         all_recent_docs: list[Document] = []
         recent_seen_urls = set()
         for src in target_sources:
@@ -358,16 +363,45 @@ def _extract_menu_metadata(page_content: str) -> dict[str, str]:
     }
 
 
+_PERSIST_DIR = "./chroma_db"
 _vectorstore = None
 
 
-def build_retriever():
+def _vectorstore_exists() -> bool:
+    """chroma_db 디렉터리에 저장된 컬렉션이 있는지 확인한다."""
+    import chromadb as _chromadb
+
+    if not os.path.isdir(_PERSIST_DIR):
+        return False
+    try:
+        client = _chromadb.PersistentClient(path=_PERSIST_DIR)
+        collection = client.get_collection("langchain")
+        return collection.count() > 0
+    except Exception:
+        return False
+
+
+def build_retriever(force_rebuild: bool = False):
     """data/raw/notices와 data/raw/dorm_menu의 .txt 파일들로 Chroma 벡터스토어를 만들고
     retriever를 반환한다.
+
+    이미 저장된 chroma_db가 있으면 임베딩 없이 로드한다.
+    force_rebuild=True이면 크롤링 후 최신 데이터로 갱신한다.
 
     각 문서의 메타데이터를 chunk 앞에 추가해 검색 결과에 출처 정보를 담는다.
     """
     global _vectorstore
+    embeddings = OpenAIEmbeddings()
+
+    if not force_rebuild and _vectorstore_exists():
+        logger.info("저장된 Chroma 벡터스토어를 로드합니다.")
+        _vectorstore = Chroma(
+            persist_directory=_PERSIST_DIR,
+            embedding_function=embeddings,
+        )
+        return _vectorstore.as_retriever(search_kwargs={"k": 100})
+
+    logger.info("Chroma 벡터스토어를 새로 구축합니다.")
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     split_docs = []
 
@@ -417,24 +451,26 @@ def build_retriever():
 
     _vectorstore = Chroma.from_documents(
         documents=split_docs,
-        embedding=OpenAIEmbeddings(),
-        persist_directory="./chroma_db",
+        embedding=embeddings,
+        persist_directory=_PERSIST_DIR,
     )
 
     return _vectorstore.as_retriever(search_kwargs={"k": 100})
 
 
-def _get_vectorstore():
-    """벡터스토어 전역 참조를 반환한다. 필요하면 지연 초기화한다."""
+def rebuild_vectorstore():
+    """크롤러 실행 후 벡터스토어를 강제로 재구축한다."""
     global _vectorstore
-    if _vectorstore is None:
-        get_retriever()
-    return _vectorstore
+    if os.path.isdir(_PERSIST_DIR):
+        import shutil
+        shutil.rmtree(_PERSIST_DIR)
+    _vectorstore = None
+    return build_retriever(force_rebuild=True)
 
 
 @lru_cache(maxsize=1)
 def get_retriever():
-    """처음 사용할 때만 Chroma 벡터스토어를 구축한다."""
+    """처음 사용할 때만 Chroma 벡터스토어를 구축하거나 로드한다."""
     return build_retriever()
 
 
@@ -473,7 +509,7 @@ understand_prompt = ChatPromptTemplate.from_messages(
             "예시: '기숙사 생활관비 납부 언제까지야?', '전자정보대학 장학 공지 있어?', "
             "'기숙사 입퇴거 날짜 알려줘', '오늘 양성재 메뉴 뭐야?' → 모두 search_notices를 호출하세요.\n"
             "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요. "
-            "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어/컴공/컴퓨터, 학교/학사/본교)를 언급한 경우, "
+            "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어, 학교/학사/본교)를 언급한 경우, "
             "search_notices의 query 인자에 해당 출처 키워드를 반드시 포함하세요.",
         ),
         MessagesPlaceholder(variable_name="messages"),
