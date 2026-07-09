@@ -244,10 +244,12 @@ def search_notices(query: str) -> str:
     max_per_url = 3 if is_detail_query else 1
 
     def _collect(targets: set[str], max_per_url: int = 1):
-        collected: list[Document] = []
         local_seen: dict[str, list[Document]] = {}
+        url_first_index: dict[str, int] = {}
+        no_url_docs: list[Document] = []
+
         for q in queries:
-            for doc in retriever.invoke(q):
+            for idx, doc in enumerate(retriever.invoke(q)):
                 if doc.metadata.get("source") not in targets:
                     continue
                 url = doc.metadata.get("url") or ""
@@ -256,16 +258,29 @@ def search_notices(query: str) -> str:
                 stripped = content.strip()
                 if stripped.endswith("[첨부 PDF 내용]"):
                     continue
-                if url:
-                    existing = local_seen.setdefault(url, [])
-                    # 내용이 완전히 같은 chunk는 중복 제거한다.
-                    if any(d.page_content == content for d in existing):
-                        continue
-                    existing.append(doc)
-                    if len(existing) <= max_per_url and url not in seen_urls:
-                        collected.append(doc)
-                else:
-                    collected.append(doc)
+                if not url:
+                    no_url_docs.append(doc)
+                    continue
+                existing = local_seen.setdefault(url, [])
+                # 내용이 완전히 같은 chunk는 중복 제거한다.
+                if any(d.page_content == content for d in existing):
+                    continue
+                existing.append(doc)
+                if url not in url_first_index:
+                    url_first_index[url] = idx
+
+        # 같은 URL 내에서는 가장 긴 chunk를 우선 선택한다.
+        # 이렇게 하면 제목/메타데이터만 담긴 placeholder-like chunk보다
+        # 실제 본문이 담긴 chunk가 먼저 선택된다.
+        collected: list[Document] = []
+        for url in sorted(url_first_index, key=lambda u: url_first_index[u]):
+            if url in seen_urls:
+                continue
+            sorted_docs = sorted(
+                local_seen[url], key=lambda d: len(d.page_content or ""), reverse=True
+            )
+            collected.extend(sorted_docs[:max_per_url])
+        collected.extend(no_url_docs)
         return collected
 
     # 1순위: 사용자가 원한 출처로만 검색
