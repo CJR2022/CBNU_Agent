@@ -116,10 +116,7 @@ python -m src.crawlers.run_all
 # 테스트
 pytest
 
-# 에이전트 실행
-python server.py
-
-# 웹 API 서버 실행
+# 웹 서버 실행
 uvicorn server:app --reload
 
 # 브랜치 상태 확인

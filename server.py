@@ -1,20 +1,18 @@
 """CBNU Agent RAG 서버 모듈.
 
 LangGraph 기반 에이전트를 구성하며, middleware 노드, 도구 노드, 그리고
-대화형 CLI와 `run_agent()` API 진입점을 제공합니다.
+`run_agent()` API 진입점을 제공합니다.
 
 주요 구성 요소:
 - LangGraph `StateGraph`: middleware → understand → tool/generate 워크플로우
 - `middleware_node`: 입력 검증 및 로깅
 - `search_notices`: 공지사항 및 기숙사 식단 검색 도구
-- `run_cli()`: 터미널 대화형 CLI
 - `run_agent()`: HTML UI 및 API 서버에서 호출하는 순수 함수형 진입점
 """
 
 import logging
 import os
 import re
-import sys
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -742,45 +740,6 @@ def run_agent(user_input: str, thread_id: str = "web") -> dict[str, str | list[s
     return {"answer": answer, "sources": sources}
 
 
-def run_cli() -> None:
-    """터미널에서 대화형으로 에이전트와 대화할 수 있는 CLI 루프."""
-    if not sys.stdin.isatty():
-        try:
-            sys.stdin.reconfigure(encoding="utf-8")
-            sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
-
-    print("충북대학교 정보 안내 챗봇 CBNU Agent에 오신 것을 환영합니다!")
-    print("종료하려면 'exit', 'quit' 또는 '종료'를 입력하세요.\n")
-
-    config = {"configurable": {"thread_id": "cli"}}
-    while True:
-        try:
-            user_input = input("사용자: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n종료합니다.")
-            break
-
-        if user_input.lower() in {"exit", "quit", "종료"}:
-            print("종료합니다.")
-            break
-
-        if not user_input:
-            continue
-
-        state = graph.invoke(
-            {
-                "messages": [("human", user_input)],
-                "sources": [],
-                "valid_input": True,
-            },
-            config,
-        )
-        last_message = state["messages"][-1]
-        print(f"에이전트: {last_message.content}\n")
-
-
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = "web"
@@ -806,7 +765,3 @@ def chat(req: ChatRequest):
     return JSONResponse(
         {"answer": result["answer"], "sources": result["sources"]}
     )
-
-
-if __name__ == "__main__":
-    run_cli()

@@ -245,9 +245,10 @@ def route_node(state): ...
 # 6. 그래프 빌드
 graph = builder.compile(checkpointer=MemorySaver())
 
-# 7. API/CLI 진입점
+# 7. API 진입점
 if __name__ == "__main__":
-    ...
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 > **핵심**: "백엔드 진입점과 핵심 로직은 server.py 하나에서 읽힌다." 파일을 여러 개 열어다니지 않아도 전체 흐름을 파악할 수 있어야 한다.
@@ -471,7 +472,7 @@ __pycache__/
 
 ### 9.5 커밋 전 체크리스트
 
-- [ ] 실행 가능한 상태인가? (`python server.py` 또는 테스트 통과)
+- [ ] 실행 가능한 상태인가? (`uvicorn server:app` 또는 테스트 통과)
 - [ ] `.env` 같은 민감 정보가 커밋에 포함되지 않았는가?
 - [ ] `requirements.txt`에 새 의존성이 추가되었는가?
 - [ ] 커밋 메시지가 변경 내용을 잘 설명하는가?
@@ -534,7 +535,7 @@ __pycache__/
 - README 작성
   - 서비스 소개 및 사용 시나리오
   - 전체 아키텍처 설명 (다이어그램 포함)
-  - 설치 및 실행 방법 (`python server.py`)
+  - 설치 및 실행 방법 (`uvicorn server:app --reload`)
   - 사용된 Tool / RAG / Memory / Middleware / OutputParser 설명
   - 한계점 및 향후 개선 방향
 - Chroma 벡터스토어는 `chroma_db/`에 영속화하며, 실행 시 기존 컬렉션이 있으면 로드한다.
@@ -550,11 +551,11 @@ python -m src.crawlers.run_all
 → data/raw/ 에 HTML/텍스트 저장
 
 [2단계: 인덱싱]
-python server.py  # 실행 시 자동으로 벡터스토어 초기화
+python -m src.crawlers.run_all
 → chroma_db/ 에 벡터스토어 생성
 
 [3단계: 대화]
-python server.py
+uvicorn server:app --reload
 → 사용자 질문 → LangGraph → 도구 선택 → 저장된 데이터 검색/조회 → 답변 생성
 ```
 

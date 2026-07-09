@@ -105,23 +105,15 @@ python -m src.crawlers.run_all
 
 `run_all.py`를 실행하면 `data/raw/notices/`와 `data/raw/dorm_menu/`에 텍스트 파일이 저장되고, 벡터스토어가 최신 데이터로 갱신됩니다.
 
-### 4) CLI로 실행
+### 4) 웹 서버 실행
 
 ```bash
-python server.py
+uvicorn server:app --reload
 ```
 
-실행하면 아래와 같이 대화형 프롬프트가 표시됩니다.
+브라우저에서 http://localhost:8000 에 접속하면 웹 UI를 통해 챗봇을 사용할 수 있습니다.
 
-```text
-충북대학교 정보 안내 챗봇 CBNU Agent에 오신 것을 환영합니다!
-종료하려면 'exit', 'quit' 또는 '종료'를 입력하세요.
-
-사용자: 안녕?
-에이전트: 안녕하세요! 충북대학교 정보 안내 챗봇입니다.
-```
-
-> 참고: `server.py`는 FastAPI 앱(`app`)도 노출하며 `/api/chat` 엔드포인트를 제공합니다. 외부 클라이언트와 연동할 때 사용할 수 있습니다.
+> 참고: `server.py`는 FastAPI 앱(`app`)을 노출하며 `/api/chat` 엔드포인트를 제공합니다.
 
 ## 4. 사용된 주요 기술
 

@@ -28,7 +28,7 @@
 - Phase 0~6 모든 작업 완료
 - `pytest tests/ -v` 13개 테스트 통과
 - `python -m src.crawlers.run_all` 크롤링 정상 실행
-- `python server.py` smoke test 통과
+- 웹 UI smoke test 통과
 - `feature/phase-2-6` → `main` 머지 완료
 - 공지사항 페이지 순회 수집 및 중복 제거 개선
 - Chroma 벡터스토어 영속화 및 크롤링 시 재빌드
