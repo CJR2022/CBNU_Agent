@@ -19,7 +19,7 @@ from src.crawlers.utils import fetch_html, clean_text, save_text, absolutize_hre
 # pypdf 경고 메시지가 stderr를 어지럽히지 않도록 조정한다.
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 
-# (이름, 목록 URL, 베이스 URL)
+# (이름, 소스 식별용 기본 목록 URL, 베이스 URL)
 NOTICE_SOURCES = [
     (
         "main",
@@ -63,12 +63,14 @@ def extract_pdf_text(url: str) -> str:
         return f"[PDF 추출 실패: {e}]"
 
 
-def extract_notice_links(list_url: str, base_url: str) -> tuple[list[dict], list[dict]]:
+def extract_notice_links(list_url: str, base_url: str, page: int = 1) -> tuple[list[dict], list[dict]]:
     """공지사항 목록 페이지에서 고정 공지와 일반 공지 링크를 분리해 추출한다.
 
     고정 공지는 상단에 항상 노출되며 페이지를 넘겨도 반복된다.
     본 함수에서는 고정 공지와 일반 공지를 구분해 반환한다.
+    page가 1보다 크면 고정 공지는 이미 수집된 것으로 보고 빈 리스트를 반환한다.
     """
+    list_url = list_url.format(page=page)
     soup = fetch_html(list_url)
 
     table = (
@@ -114,12 +116,22 @@ def extract_notice_links(list_url: str, base_url: str) -> tuple[list[dict], list
         row_classes = set(row.get("class") or [])
         is_pinned = bool(row_classes & pinned_classes)
 
+        # 2페이지 이상에서는 고정 공지가 다시 나오지 않으므로 무조건 일반으로 처리
+        if page > 1:
+            is_pinned = False
+
         _add(pinned_links if is_pinned else normal_links, a_tag, title, href)
 
     return pinned_links, normal_links
 
 
-# 제목으로 사용하지 않을 일반적인 낸비게이션/메뉴 텍스트
+# 각 소스별 페이지 URL 템플릿. {page}를 페이지 번호로 치환한다.
+PAGE_URL_TEMPLATES = {
+    "main": "https://www.chungbuk.ac.kr/www/selectBbsNttList.do?bbsNo=8&key=815&searchCtgry=학사/장학&page={page}",
+    "ece": "https://ece.cbnu.ac.kr/ece0602?searchField=All&searchValue=&page={page}",
+    "sw": "https://software.cbnu.ac.kr/sub0401?page={page}",
+    "dorm": "https://dorm.chungbuk.ac.kr/home/sub.php?menukey=20039&mod=list&page={page}&listCnt=20",
+}
 _EXCLUDED_TITLES = {
     "전체",
     "공지사항",
@@ -366,22 +378,72 @@ def format_notice(notice: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_list_url(source_name: str, page: int) -> str:
+    """소스 이름과 페이지 번호로 실제 목록 URL을 만든다."""
+    template = PAGE_URL_TEMPLATES.get(source_name)
+    if template:
+        return template.format(page=page)
+    # 평백: NOTICE_SOURCES의 기본 URL 사용
+    for name, list_url, _ in NOTICE_SOURCES:
+        if name == source_name:
+            return list_url
+    raise ValueError(f"Unknown source: {source_name}")
+
+
+def _collect_normal_notices(
+    source_name: str,
+    base_url: str,
+    pinned_titles: set[str],
+    pinned_urls: set[str],
+    limit: int = 50,
+) -> list[dict]:
+    """고정 공지를 제외한 최신 일반 공지를 limit 개수만큼 페이지를 순회하며 수집한다."""
+    normal_notices: list[dict] = []
+    seen_urls = set(pinned_urls)
+    seen_titles = set(pinned_titles)
+    page = 1
+    empty_count = 0
+
+    while len(normal_notices) < limit and empty_count < 2:
+        list_url = _build_list_url(source_name, page)
+        _, normals = extract_notice_links(list_url, base_url, page=page)
+        if not normals:
+            empty_count += 1
+        else:
+            empty_count = 0
+
+        added = 0
+        for item in normals:
+            if item["url"] in seen_urls or item["title"] in seen_titles:
+                continue
+            seen_urls.add(item["url"])
+            seen_titles.add(item["title"])
+            normal_notices.append(item)
+            added += 1
+            if len(normal_notices) >= limit:
+                break
+
+        if not added and normals:
+            # 새로운 공지가 없으면 중단
+            break
+        page += 1
+
+    return normal_notices
+
+
 def crawl_notices(source_name: str, list_url: str, base_url: str) -> str:
     """하나의 공지사항 소스를 크롤링해서 통합 텍스트로 반환한다."""
     print(f"Crawling {source_name} ...")
-    pinned_links, normal_links = extract_notice_links(list_url, base_url)
-    print(f"  found {len(pinned_links)} pinned, {len(normal_links)} normal notices")
+    pinned_links, _ = extract_notice_links(list_url, base_url, page=1)
+    print(f"  found {len(pinned_links)} pinned notices")
 
-    # 고정 공지는 한 번만 포함하고, 일반 공지와 중복되지 않도록 URL 집합을 유지한다.
+    # 고정 공지는 한 번만 포함한다.
     selected: list[dict] = []
     seen_urls: set[str] = set()
     seen_titles: set[str] = set()
 
-    def _is_duplicate(item: dict) -> bool:
-        return item["url"] in seen_urls or item["title"] in seen_titles
-
     def _add(item: dict):
-        if _is_duplicate(item):
+        if item["url"] in seen_urls or item["title"] in seen_titles:
             return
         seen_urls.add(item["url"])
         seen_titles.add(item["title"])
@@ -390,13 +452,17 @@ def crawl_notices(source_name: str, list_url: str, base_url: str) -> str:
     for item in pinned_links:
         _add(item)
 
+    # 고정 공지 제목/URL을 미리 수집해 일반 공지 중복 방지에 사용한다.
+    pinned_titles = {item["title"] for item in selected}
+    pinned_urls = {item["url"] for item in selected}
+
+    normal_links = _collect_normal_notices(
+        source_name, base_url, pinned_titles, pinned_urls, limit=50
+    )
+    print(f"  found {len(normal_links)} normal notices (target 50)")
+
     for item in normal_links:
-        # 일반 공지 중 고정 공지와 제목이 같으면 건다.
-        if item["title"] in seen_titles:
-            continue
         _add(item)
-        if len(selected) >= 20:
-            break
 
     parts = [f"# {source_name} 공지사항\n"]
     for item in selected:
@@ -410,8 +476,8 @@ def crawl_notices(source_name: str, list_url: str, base_url: str) -> str:
 
 def crawl_all_notices(save_dir: str = "data/raw/notices") -> None:
     """4개 공지사항 소스를 모두 크롤링해서 저장한다."""
-    for name, list_url, base_url in NOTICE_SOURCES:
-        text = crawl_notices(name, list_url, base_url)
+    for name, _, base_url in NOTICE_SOURCES:
+        text = crawl_notices(name, _build_list_url(name, 1), base_url)
         path = f"{save_dir}/{name}_notice.txt"
         save_text(text, path)
         print(f"Saved {name} notices to {path}\n")
