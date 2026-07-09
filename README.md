@@ -36,7 +36,6 @@ call_tool_node ────────→ generate_node
 
 - **LangGraph** 기반의 `StateGraph`로 동작하며, `MemorySaver`를 사용해 대화 맥락을 유지합니다.
 - 입력은 `middleware`에서 검증되고, 질문 유형에 따라 도구를 호출하거나 바로 답변을 생성합니다.
-- 전체 워크플로우 다이어그램은 [docs/workflow_diagram.md](docs/workflow_diagram.md)에서 확인할 수 있습니다.
 
 ## 3. 설치 및 실행 방법
 

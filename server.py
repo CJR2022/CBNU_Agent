@@ -392,7 +392,7 @@ understand_prompt = ChatPromptTemplate.from_messages(
             "당신은 충북대학교 정보 안내 챗봇입니다.\n"
             "학교/기숙사/학과 공지사항이나 기숙사 식단에 대한 구체적인 질문은 반드시 search_notices 도구를 사용하세요. "
             "일반 대화면 바로 답변하세요.\n"
-            "예시: '기숙사 생활관비 납부 언제까지야?', '전자정볼대학 장학 공지 있어?', "
+            "예시: '기숙사 생활관비 납부 언제까지야?', '전자정보대학 장학 공지 있어?', "
             "'기숙사 입퇴거 날짜 알려줘', '오늘 양성재 메뉴 뭐야?' → 모두 search_notices를 호출하세요.\n"
             "사용자가 '최근'이나 '최신'을 언급한 경우, search_notices의 query 인자에 해당 키워드를 반드시 포함하세요. "
             "또한 사용자가 공지 출처(기숙사/생활관, 전자정보, 소프트웨어/컴공/컴퓨터, 학교/학사/본교)를 언급한 경우, "
@@ -445,6 +445,35 @@ def call_tool_node(state: AgentState) -> dict:
     return {"messages": tool_messages}
 
 
+def _extract_urls_from_messages(messages: list) -> list[str]:
+    """ToolMessage나 HumanMessage에서 참고 URL 목록을 추출한다."""
+    urls = []
+    url_pattern = re.compile(r"https?://[^\s\]\)>\"]+")
+    for msg in messages:
+        if isinstance(msg, (AIMessage, ToolMessage, HumanMessage)):
+            content = str(msg.content)
+            # search_notices 결과에서 "URL: ..." 형태를 우선 추출
+            for line in content.splitlines():
+                if line.strip().startswith("URL:"):
+                    url = line.split("URL:", 1)[1].strip()
+                    if url and url not in urls:
+                        urls.append(url)
+            # 일반 URL도 추가
+            for match in url_pattern.findall(content):
+                if match not in urls:
+                    urls.append(match)
+    return urls
+
+
+def _resolve_confidence(answer: str, sources: list[str]) -> str:
+    """답변 내용과 출처 존재 여부에 따라 confidence를 결정한다."""
+    if not sources:
+        return "low"
+    if any(phrase in answer for phrase in ("확인할 수 없습니다", "학교 홈페이지를 직접 확인")):
+        return "medium"
+    return "high"
+
+
 def generate_node(state: AgentState) -> dict:
     """대화 기록과 도구 결과를 바탕으로 최종 답변을 생성한다."""
     parser = PydanticOutputParser(pydantic_object=FinalAnswer)
@@ -462,7 +491,7 @@ def generate_node(state: AgentState) -> dict:
                 "정보가 부족하면 '해당 정보는 확인할 수 없습니다' 또는 '학교 홈페이지를 직접 확인해 주세요'라고 답변하세요.\n"
                 "답변에 참고한 공지/식단의 제목(또는 기숙사), 날짜, URL을 포함하세요. "
                 "검색 결과 중 날짜가 가장 최근인 문서를 우선적으로 참고하세요. "
-                "sources 필드에는 참고한 문서의 URL을 채워넣으세요.\n"
+                "sources 필드에는 참고한 문서의 URL을 정확히 채워넣으세요.\n"
                 "{format_instructions}",
             ),
             MessagesPlaceholder(variable_name="messages"),
@@ -477,6 +506,12 @@ def generate_node(state: AgentState) -> dict:
         parsed = parser.parse(content)
     except Exception:
         parsed = FinalAnswer(answer=content, sources=[], confidence="low")
+
+    # LLM이 sources를 비워둔 경우, 검색 결과에서 URL을 복원한다.
+    if not parsed.sources:
+        parsed.sources = _extract_urls_from_messages(messages)
+
+    parsed.confidence = _resolve_confidence(parsed.answer, parsed.sources)
 
     return {
         "messages": [AIMessage(content=parsed.answer)],
