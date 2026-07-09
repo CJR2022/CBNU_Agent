@@ -202,8 +202,11 @@
             let html = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             // 2. [텍스트](URL) → <a href="URL">텍스트</a>
             html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-            // 3. 단독 URL → 클릭 가능한 링크
-            html = html.replace(/(https?:\/\/[^\s<\]\)"]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+            // 3. 아직 링크로 변환되지 않은 단독 URL만 클릭 가능한 링크로 변환
+            //    <a ...> 난이나 </a> 태그 난부의 URL은 제외
+            html = html.replace(/(?!<[^>]*)(https?:\/\/[^\s<"]+)(?![^\u003c]*<\/a>)/g, (match) => {
+                return `<a href="${match}" target="_blank" rel="noopener noreferrer">${match}</a>`;
+            });
             return html;
         }
 
