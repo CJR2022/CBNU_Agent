@@ -18,3 +18,5 @@ __pycache__/
 PLAN.md
 STATUS.md
 TODO.md
+tests/
+pytest.ini
