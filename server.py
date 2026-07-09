@@ -267,7 +267,7 @@ def search_notices(query: str) -> str:
 
     recent_keywords = ["최근", "최신"]
     if any(keyword in query for keyword in recent_keywords):
-        # "최근/최신"은 벡터 유사도보다 날짜 기준 전체 문서를 가져와 정확히 정렬한다.
+        # "최근/최신"은 해당 소스에서 날짜 기준 상위 문서만 가져와 정렬한다.
         if _vectorstore is None:
             build_retriever()
         vectorstore = _vectorstore
@@ -275,7 +275,8 @@ def search_notices(query: str) -> str:
         recent_seen_urls = set()
         for src in target_sources:
             filter_dict = {"source": src}
-            src_docs = vectorstore.similarity_search("", k=1000, filter=filter_dict)
+            # 상위 50개만 가져와 중복 제거 후 날짜 기준 정렬
+            src_docs = vectorstore.similarity_search("", k=50, filter=filter_dict)
             for doc in src_docs:
                 url = doc.metadata.get("url")
                 if url and url not in recent_seen_urls:
@@ -620,8 +621,14 @@ def generate_node(state: AgentState) -> dict:
     except Exception:
         parsed = FinalAnswer(answer=content, sources=[])
 
-    # 최종 답변에 실제로 등장하는 URL만 sources로 유지한다.
-    parsed.sources = _extract_urls_from_text(parsed.answer)
+    # LLM이 sources 필드에 채운 URL과 답변 본문의 URL을 합쳐서 최종 sources로 사용한다.
+    # 답변 본문에 URL이 없을 때도 참고한 문서의 URL이 누락되지 않도록 보장한다.
+    answer_urls = _extract_urls_from_text(parsed.answer)
+    combined_urls = []
+    for url in parsed.sources + answer_urls:
+        if url not in combined_urls:
+            combined_urls.append(url)
+    parsed.sources = combined_urls
 
     return {
         "messages": [AIMessage(content=parsed.answer)],
