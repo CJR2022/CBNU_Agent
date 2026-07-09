@@ -504,6 +504,20 @@ def understand_node(state: AgentState) -> dict:
                         if keyword not in query:
                             tool_call["args"]["query"] = f"{query} {keyword}".strip()
 
+            # 식단 질문에서 날짜/기숙사 키워드가 빠지지 않도록 보정한다.
+            if is_meal:
+                date_keywords = ["오늘", "어제", "내일"]
+                dorm = _detect_dorm(last_human)
+                for tool_call in response.tool_calls:
+                    if tool_call.get("name") == "search_notices":
+                        query = tool_call.get("args", {}).get("query", "")
+                        for dk in date_keywords:
+                            if dk in last_human and dk not in query:
+                                query = f"{query} {dk}".strip()
+                        if dorm and dorm not in query:
+                            query = f"{query} {dorm}".strip()
+                        tool_call["args"]["query"] = query
+
     return {"messages": [response]}
 
 
