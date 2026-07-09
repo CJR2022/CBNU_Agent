@@ -63,17 +63,14 @@ def extract_pdf_text(url: str) -> str:
         return f"[PDF 추출 실패: {e}]"
 
 
-def extract_notice_links(list_url: str, base_url: str) -> list[dict]:
-    """공지사항 목록 페이지에서 제목과 본문 링크를 추출한다.
+def extract_notice_links(list_url: str, base_url: str) -> tuple[list[dict], list[dict]]:
+    """공지사항 목록 페이지에서 고정 공지와 일반 공지 링크를 분리해 추출한다.
 
-    상단 고정 공지는 페이지를 넘어가도 반복되므로 제외하고,
-    일반 공지만 수집한다.
+    고정 공지는 상단에 항상 노출되며 페이지를 넘겨도 반복된다.
+    본 함수에서는 고정 공지와 일반 공지를 구분해 반환한다.
     """
     soup = fetch_html(list_url)
-    links = []
-    seen_urls = set()
 
-    # 각 사이트의 테이블 선택자 우선순위
     table = (
         soup.find("table", class_="p-table")
         or soup.find("table", class_="bd_lst")
@@ -81,46 +78,45 @@ def extract_notice_links(list_url: str, base_url: str) -> list[dict]:
         or soup.find("table")
     )
     if not table:
-        return links
+        return [], []
 
     pinned_classes = {"notice", "p-notice", "brd_notice"}
+
+    pinned_links: list[dict] = []
+    normal_links: list[dict] = []
+    seen_urls: set[str] = set()
+
+    def _add(links: list[dict], a_tag, title: str, href: str):
+        if not title or href.startswith("#") or "javascript" in href.lower():
+            return
+        if href in seen_urls:
+            return
+        seen_urls.add(href)
+        links.append({"title": title, "url": href})
 
     for row in table.find_all("tr")[1:]:  # 헤더 제외
         cells = row.find_all(["td", "th"])
         if not cells:
             continue
 
-        # 상단 고정 공지 행은 제외한다.
-        row_classes = set(row.get("class") or [])
-        if row_classes & pinned_classes:
-            continue
-
-        # 제목이 담긴 셀 찾기
         a_tag = None
         for cell in cells:
             a = cell.find("a", href=True)
             if a:
                 a_tag = a
                 break
-
         if not a_tag:
             continue
 
         title = clean_text(a_tag.get_text(strip=True))
         href = absolutize_href(a_tag["href"], base_url)
 
-        # 광고/불필요 링크 필터
-        if not title or href.startswith("#") or "javascript" in href.lower():
-            continue
+        row_classes = set(row.get("class") or [])
+        is_pinned = bool(row_classes & pinned_classes)
 
-        # 중복 URL 제거
-        if href in seen_urls:
-            continue
-        seen_urls.add(href)
+        _add(pinned_links if is_pinned else normal_links, a_tag, title, href)
 
-        links.append({"title": title, "url": href})
-
-    return links
+    return pinned_links, normal_links
 
 
 # 제목으로 사용하지 않을 일반적인 낸비게이션/메뉴 텍스트
@@ -373,11 +369,37 @@ def format_notice(notice: dict) -> str:
 def crawl_notices(source_name: str, list_url: str, base_url: str) -> str:
     """하나의 공지사항 소스를 크롤링해서 통합 텍스트로 반환한다."""
     print(f"Crawling {source_name} ...")
-    links = extract_notice_links(list_url, base_url)
-    print(f"  found {len(links)} notices")
+    pinned_links, normal_links = extract_notice_links(list_url, base_url)
+    print(f"  found {len(pinned_links)} pinned, {len(normal_links)} normal notices")
+
+    # 고정 공지는 한 번만 포함하고, 일반 공지와 중복되지 않도록 URL 집합을 유지한다.
+    selected: list[dict] = []
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
+
+    def _is_duplicate(item: dict) -> bool:
+        return item["url"] in seen_urls or item["title"] in seen_titles
+
+    def _add(item: dict):
+        if _is_duplicate(item):
+            return
+        seen_urls.add(item["url"])
+        seen_titles.add(item["title"])
+        selected.append(item)
+
+    for item in pinned_links:
+        _add(item)
+
+    for item in normal_links:
+        # 일반 공지 중 고정 공지와 제목이 같으면 건다.
+        if item["title"] in seen_titles:
+            continue
+        _add(item)
+        if len(selected) >= 20:
+            break
 
     parts = [f"# {source_name} 공지사항\n"]
-    for item in links[:20]:  # 첫 페이지, 최대 20건
+    for item in selected:
         try:
             detail = extract_notice_detail(item["url"], fallback_title=item["title"])
             parts.append(format_notice(detail))
