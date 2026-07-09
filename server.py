@@ -385,7 +385,7 @@ def build_retriever(force_rebuild: bool = False):
     retriever를 반환한다.
 
     이미 저장된 chroma_db가 있으면 임베딩 없이 로드한다.
-    force_rebuild=True이면 크롤링 후 최신 데이터로 갱신한다.
+    force_rebuild=True이면 기존 컬렉션의 문서를 모두 지우고 최신 데이터로 갱신한다.
 
     각 문서의 메타데이터를 chunk 앞에 추가해 검색 결과에 출처 정보를 담는다.
     """
@@ -448,6 +448,19 @@ def build_retriever(force_rebuild: bool = False):
             chunk.page_content = header + chunk.page_content
             split_docs.append(chunk)
 
+    if _vectorstore is None and _vectorstore_exists():
+        _vectorstore = Chroma(
+            persist_directory=_PERSIST_DIR,
+            embedding_function=embeddings,
+        )
+
+    if _vectorstore is not None:
+        try:
+            _vectorstore.delete_collection()
+        except Exception as e:
+            logger.warning(f"기존 컬렉션 삭제 중 오류(무시): {e}")
+        _vectorstore = None
+
     _vectorstore = Chroma.from_documents(
         documents=split_docs,
         embedding=embeddings,
@@ -458,12 +471,7 @@ def build_retriever(force_rebuild: bool = False):
 
 
 def rebuild_vectorstore():
-    """크롤러 실행 후 벡터스토어를 강제로 재구축한다."""
-    global _vectorstore
-    if os.path.isdir(_PERSIST_DIR):
-        import shutil
-        shutil.rmtree(_PERSIST_DIR)
-    _vectorstore = None
+    """크롤러 실행 후 벡터스토어를 최신 데이터로 갱신한다."""
     return build_retriever(force_rebuild=True)
 
 
