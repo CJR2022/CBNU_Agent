@@ -49,12 +49,12 @@ config:
     curve: linear
 ---
 graph TD;
-    __start__([<p>__start__</p>]):::first
+    __start__([__start__]):::first
     middleware(middleware)
     understand_node(understand_node)
     call_tool_node(call_tool_node)
     generate_node(generate_node)
-    __end__([<p>__end__</p>]):::last
+    __end__([__end__]):::last
     __start__ --> middleware;
     call_tool_node --> generate_node;
     middleware -.-> __end__;
@@ -62,9 +62,9 @@ graph TD;
     understand_node -.-> call_tool_node;
     understand_node -.-> generate_node;
     generate_node --> __end__;
-    classDef default fill:#f2f0ff,line-height:1.2
-    classDef first fill-opacity:0
-    classDef last fill:#bfb6fc
+    classDef default fill:#f2f0ff,color:#111111,stroke:#bcbcbc,line-height:1.2
+    classDef first fill-opacity:0,color:#ffffff,stroke:#ffffff
+    classDef last fill:#bfb6fc,color:#111111,stroke:#9b8ee0
 ```
 
 ### 노드 설명
@@ -164,7 +164,7 @@ uvicorn server:app --reload
 - **실시간 데이터 의존**: 공지사항, 기숙사 식단, 학사일정은 주기적 크롤링 이후에 검색할 수 있어 최신 정보가 바로 반영되지 않을 수 있습니다.
 - **크롤링 불안정성**: 웹사이트 구조가 변경되면 CSS 선택자를 직접 수정해야 합니다.
 - **이미지 파일 읽기**: 공지의 본문에 첨부파일도 없고 오로지 이미지로만 구성된 경우 현재 이를 데이터로 저장할 수 없습니다.
-- **크롤링 범위**: 크롤링 하는 범위가 아직 제한적이고 가져오는 공지 페이지의 개수도 제한해두었기에 실제 공지사항에 있는 내용이지만 크롤링 범위 밖에 있어(상위 50개 밖) 가져오지 못할 수 있습니다.
+- **크롤링 범위**: 크롤링 하는 범위가 아직 제한적이고 가져오는 공지 페이지의 개수도 제한해두었기에 실제 공지사항에 있는 내용이지만 크롤링 범위 밖에 있어(상위 50개 밖) 가져오지 못할 수 있습니다. ex)소프트웨어학부 등록금을 물어봤는데 등록금 관련 공지 상위 공지가 이미 50개 이상 쌓여 있어 데이터에 포함이 안 됨
 - **소스 선택 판단**: 검색하려는 소스(긱사, 단과대 등등)를 결정할 때 현재는 키워드 중심으로 하드필터링을 1차적으로 하고 그 결과가 없을때 전체 소스를 검색하고 있습니다. 
 
 ### 향후 개선 방향
